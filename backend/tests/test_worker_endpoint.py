@@ -1,0 +1,109 @@
+def test_endpoint_worker_continues_after_row_failure(db, monkeypatch):
+    from app import storage, tasks
+    from app.evals.base import CallableAdapter, MetricScore
+    from app.models import (
+        Dataset,
+        Membership,
+        ProviderConnection,
+        Run,
+        RunResult,
+        User,
+        Workspace,
+    )
+    from app.security import encrypt_secret
+
+    user = User(email="endpoint-worker@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Endpoint Worker", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    db.add(Membership(user_id=user.id, workspace_id=workspace.id, role="owner"))
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Prompts",
+        format="json",
+        row_count=2,
+        storage_path=f"datasets/{workspace.id}/prompts.json",
+        schema_map={"input": "prompt"},
+    )
+    db.add(dataset)
+    db.add(
+        ProviderConnection(
+            workspace_id=workspace.id,
+            name="OpenAI",
+            connection_type="openai",
+            encrypted_key=encrypt_secret("sk-test"),
+        )
+    )
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Endpoint run",
+        mode="endpoint",
+        metric_config={"metrics": [{"key": "test.score", "threshold": 0.5}]},
+        endpoint_config={
+            "url": "https://example.com",
+            "method": "POST",
+            "headers": {"Authorization": encrypt_secret("Bearer endpoint")},
+            "body_template": {"prompt": "{{input}}"},
+            "response_jsonpath": "$.answer",
+        },
+        judge_config={"provider": "openai", "model": "model"},
+        progress_total=2,
+    )
+    db.add(run)
+    db.commit()
+
+    monkeypatch.setattr(
+        storage,
+        "get_object",
+        lambda key: b'[{"prompt":"one"},{"prompt":"two"}]',
+    )
+    adapter = CallableAdapter(
+        key="test.score",
+        framework="test",
+        display_name="Score",
+        description="Score",
+        requires=frozenset(),
+        scorer=lambda row, judge, config: MetricScore(
+            "test.score", 0.9, row.actual_output, True
+        ),
+    )
+    monkeypatch.setattr(tasks, "METRICS", {"test.score": adapter})
+    calls = []
+
+    def fake_call(config, row, *, encrypted_headers):
+        calls.append((row.input, encrypted_headers))
+        if row.input == "two":
+            raise RuntimeError("endpoint unavailable")
+        return "answer one", {"answer": "answer one"}, 17.4
+
+    monkeypatch.setattr(tasks, "call_endpoint", fake_call)
+    tasks.evaluate_run.run(run.id)
+    db.expire_all()
+
+    stored_run = db.get(Run, run.id)
+    results = db.query(RunResult).order_by(RunResult.row_index).all()
+    assert stored_run.status == "completed"
+    assert stored_run.progress_done == 2
+    assert calls == [("one", True), ("two", True)]
+    assert results[0].actual == "answer one"
+    assert results[0].latency_ms == 17
+    assert results[0].scores["test.score"]["score"] == 0.9
+    assert results[1].actual is None
+    assert results[1].error == "endpoint unavailable"
+
+    def fail_call(config, row, *, encrypted_headers):
+        raise RuntimeError("endpoint unavailable")
+
+    stored_run.status = "pending"
+    stored_run.finished_at = None
+    db.commit()
+    monkeypatch.setattr(tasks, "call_endpoint", fail_call)
+    tasks.evaluate_run.run(run.id)
+    db.expire_all()
+
+    assert db.get(Run, run.id).status == "failed"
+    assert db.get(Run, run.id).error == "All rows failed"

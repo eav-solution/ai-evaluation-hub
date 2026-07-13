@@ -1,0 +1,91 @@
+def test_dataset_metadata_roundtrip(db):
+    from app.models import Dataset, Membership, User, Workspace
+
+    user = User(email="dataset@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Data", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    db.add(Membership(user_id=user.id, workspace_id=workspace.id, role="owner"))
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Questions",
+        format="csv",
+        row_count=2,
+        storage_path=f"datasets/{workspace.id}/data.csv",
+        schema_map={"input": "question", "actual_output": "answer"},
+    )
+    db.add(dataset)
+    db.commit()
+
+    assert db.get(Dataset, dataset.id).schema_map["input"] == "question"
+
+
+def test_dataset_upload_map_preview_and_delete(client, auth_headers, object_store):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    uploaded = client.post(
+        f"/api/workspaces/{workspace_id}/datasets",
+        data={"name": "Questions"},
+        files={
+            "file": (
+                "questions.csv",
+                b"question,answer\nWhat?,This.\nWhy?,Because.\n",
+                "text/csv",
+            )
+        },
+        headers=auth_headers,
+    )
+    assert uploaded.status_code == 201
+    dataset = uploaded.json()
+    assert dataset["row_count"] == 2
+    assert dataset["preview"][0]["question"] == "What?"
+    assert list(object_store) == [dataset["storage_path"]]
+
+    mapped = client.patch(
+        f"/api/workspaces/{workspace_id}/datasets/{dataset['id']}/schema-map",
+        json={"schema_map": {"input": "question", "actual_output": "answer"}},
+        headers=auth_headers,
+    )
+    assert mapped.status_code == 200
+    assert mapped.json()["schema_map"]["input"] == "question"
+
+    assert len(
+        client.get(f"/api/workspaces/{workspace_id}/datasets", headers=auth_headers).json()
+    ) == 1
+    detail = client.get(
+        f"/api/workspaces/{workspace_id}/datasets/{dataset['id']}",
+        headers=auth_headers,
+    )
+    assert detail.json()["preview"][1]["answer"] == "Because."
+
+    deleted = client.delete(
+        f"/api/workspaces/{workspace_id}/datasets/{dataset['id']}",
+        headers=auth_headers,
+    )
+    assert deleted.status_code == 204
+    assert object_store == {}
+
+
+def test_dataset_upload_rejects_invalid_format(client, auth_headers, object_store):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    response = client.post(
+        f"/api/workspaces/{workspace_id}/datasets",
+        data={"name": "Bad"},
+        files={"file": ("bad.txt", b"hello", "text/plain")},
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_nonmember_cannot_access_dataset(client, auth_headers, object_store):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    token = client.post(
+        "/api/auth/register",
+        json={"email": "dataset-intruder@example.com", "password": "password123"},
+    ).json()["access_token"]
+    response = client.get(
+        f"/api/workspaces/{workspace_id}/datasets",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
