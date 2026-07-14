@@ -1,7 +1,7 @@
 # Curated Ragas and DeepEval Metric Support — Design
 
 **Date:** 2026-07-14
-**Status:** Approved design; awaiting written-spec review
+**Status:** Approved
 
 ## Supersession and retained decisions
 
@@ -405,6 +405,16 @@ optional usage and estimated cost
 Adapters validate normalized scores and reject non-finite or out-of-range
 values. They must not silently clamp invalid upstream results.
 
+Score direction comes from adapter catalog metadata returned by
+`GET /api/metrics`; reports do not infer it from metric names or frameworks.
+Historical metrics missing from the current catalog retain their raw values and
+display an unknown direction instead of defaulting to higher-is-better.
+
+`latency_ms` already exists on current result rows. New `details`, `usage`, and
+`estimated_cost` storage added by the core-contract phase must be nullable and
+additive. Existing rows expose absent values as `null` and remain readable
+without migration-time reprocessing.
+
 Existing report summaries remain: mean, minimum, maximum, p50, and pass rate.
 Trace, tool, conversation, MCP, and image details appear in result drill-downs
 without introducing label, pairwise, or SQL result kinds. CSV and JSON exports
@@ -453,7 +463,8 @@ selecting all 25 cards.
 - All ten current adapter keys remain stable.
 - Existing `contexts` mappings normalize as `retrieval_contexts`.
 - Existing Hallucination runs retain their legacy context fallback.
-- Existing scalar results and reports remain readable without reprocessing.
+- Existing scalar results and reports remain readable without reprocessing;
+  new optional details, usage, and estimated-cost fields are `null` on old rows.
 - Existing endpoint response paths are interpreted as the `actual_output`
   mapping.
 - API and database changes remain additive until current consumers migrate.
@@ -502,7 +513,13 @@ from a supported offline or live source to persisted report output.
 
 ## Implementation decomposition
 
-Write and execute five phase-specific plans in order:
+Phase 0 is complete:
+
+0. **Evaluation stability fixes** — atomic run claiming, resumable persisted
+   progress, immutable current-run schema mappings, direction-aware reports,
+   strict score validation, and complete preview-column discovery.
+
+Write and execute the remaining five phase-specific plans in order:
 
 1. **Core contract and dependency upgrade** — DeepEval 4.1.0, adapter metadata,
    generated config schema, typed sample foundation, scalar result extensions,
