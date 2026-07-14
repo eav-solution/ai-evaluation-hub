@@ -5,7 +5,12 @@ def test_render_template_preserves_whole_value_types():
     from app.endpoints import render_template
     from app.evals.base import EvalRow
 
-    row = EvalRow("hello", "", "expected", ["one", "two"])
+    row = EvalRow(
+        input="hello",
+        actual_output="",
+        expected_output="expected",
+        retrieval_contexts=["one", "two"],
+    )
     rendered = render_template(
         {
             "message": "Question: {{input}}",
@@ -58,7 +63,7 @@ def test_endpoint_client_blocks_private_addresses(monkeypatch):
                 "body_template": {"input": "{{input}}"},
                 "response_jsonpath": "$.answer",
             },
-            EvalRow("hello", "", None, None),
+            EvalRow(input="hello", actual_output=""),
             encrypted_headers=False,
         )
 
@@ -105,7 +110,7 @@ def test_endpoint_client_retries_and_extracts(monkeypatch):
             "body_template": {"input": "{{input}}"},
             "response_jsonpath": "$.answer",
         },
-        EvalRow("hello", "", None, None),
+        EvalRow(input="hello", actual_output=""),
         encrypted_headers=False,
     )
     assert answer == "world"
@@ -140,7 +145,7 @@ def test_endpoint_client_retries_override_disables_retries(monkeypatch):
                 "body_template": {"input": "{{input}}"},
                 "response_jsonpath": "$.answer",
             },
-            EvalRow("hello", "", None, None),
+            EvalRow(input="hello", actual_output=""),
             encrypted_headers=False,
             retries=0,
         )

@@ -2,13 +2,10 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Callable, Protocol
 
+from app.evals.samples import SingleTurnSample
 
-@dataclass(frozen=True)
-class EvalRow:
-    input: str
-    actual_output: str
-    expected_output: str | None
-    contexts: list[str] | None
+
+EvalRow = SingleTurnSample
 
 
 @dataclass(frozen=True)

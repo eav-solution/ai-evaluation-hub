@@ -56,7 +56,7 @@ def test_callable_adapter_accepts_score_boundaries():
             ),
         )
         score = adapter.score(
-            EvalRow("input", "actual", None, None),
+            EvalRow(input="input", actual_output="actual"),
             JudgeConfig("openai", "model", "key"),
         )
         assert score.score == value
@@ -80,6 +80,6 @@ def test_callable_adapter_rejects_invalid_score():
         )
         with pytest.raises(ValueError, match="score in the range 0..1"):
             adapter.score(
-                EvalRow("input", "actual", None, None),
+                EvalRow(input="input", actual_output="actual"),
                 JudgeConfig("openai", "model", "key"),
             )

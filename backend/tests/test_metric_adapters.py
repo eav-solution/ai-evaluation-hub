@@ -19,7 +19,12 @@ def test_ragas_adapter_maps_fields_and_threshold(monkeypatch):
     monkeypatch.setattr(ragas, "_make_metric", lambda name, judge: Metric())
     result = ragas.score_metric(
         "faithfulness",
-        EvalRow("question", "answer", None, ["context"]),
+        EvalRow(
+            input="question",
+            actual_output="answer",
+            expected_output=None,
+            retrieval_contexts=["context"],
+        ),
         JudgeConfig("openai", "model", "key"),
         {"threshold": 0.7},
     )
@@ -41,6 +46,8 @@ def test_deepeval_adapter_uses_metric_success(monkeypatch):
 
         def measure(self, test_case, **kwargs):
             assert test_case.actual_output == "answer"
+            assert test_case.context == ["legacy context"]
+            assert test_case.retrieval_context == ["legacy context"]
             return 0.1
 
         def is_successful(self):
@@ -49,7 +56,11 @@ def test_deepeval_adapter_uses_metric_success(monkeypatch):
     monkeypatch.setattr(deepeval, "_make_metric", lambda *args: Metric())
     result = deepeval.score_metric(
         "toxicity",
-        EvalRow("question", "answer", None, None),
+        EvalRow(
+            input="question",
+            actual_output="answer",
+            retrieval_contexts=["legacy context"],
+        ),
         JudgeConfig("openai", "model", "key"),
         {"threshold": 0.5},
     )

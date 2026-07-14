@@ -29,7 +29,7 @@ def test_endpoint(
         input=body.input,
         actual_output="",
         expected_output=body.expected_output,
-        contexts=body.contexts,
+        retrieval_contexts=body.contexts,
     )
     try:
         # Single attempt: interactive test button; retrying a slow endpoint

@@ -130,7 +130,7 @@ def _eval_row(
         input=str(input_value),
         actual_output=str(actual),
         expected_output=_text(source.get(mapping.get("expected_output"))),
-        contexts=_contexts(source.get(mapping.get("contexts"))),
+        retrieval_contexts=_contexts(source.get(mapping.get("contexts"))),
     )
 
 
@@ -225,7 +225,7 @@ def _stored_row(result: RunResult) -> EvalRow:
         input=result.input,
         actual_output=result.actual or "",
         expected_output=result.expected,
-        contexts=result.contexts,
+        retrieval_contexts=result.contexts,
     )
 
 
@@ -357,7 +357,7 @@ def evaluate_run(run_id: str) -> None:
                                     input=row.input,
                                     actual_output=answer,
                                     expected_output=row.expected_output,
-                                    contexts=row.contexts,
+                                    retrieval_contexts=row.contexts,
                                 )
                                 db.commit()
                         else:

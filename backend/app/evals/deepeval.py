@@ -54,8 +54,8 @@ def score_metric(
         input=row.input,
         actual_output=row.actual_output,
         expected_output=row.expected_output,
-        context=row.contexts,
-        retrieval_context=row.contexts,
+        context=row.context or row.retrieval_contexts,
+        retrieval_context=row.retrieval_contexts,
     )
     value = float(
         metric.measure(
