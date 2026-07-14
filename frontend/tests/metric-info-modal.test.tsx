@@ -9,10 +9,18 @@ import type {Metric} from "@/lib/types";
 
 const metric: Metric = {
   key: "ragas.faithfulness",
+  revision: "1",
   framework: "ragas",
+  category: "rag",
+  family: "generation",
   display_name: "Faithfulness",
   description: "Groundedness",
+  sample_kind: "single_turn",
   requires: ["contexts"],
+  resources: ["judge"],
+  config_schema: {type: "object"},
+  default_config: {threshold: null},
+  recommended: true,
   info: {
     meaning: "Claims must be supported by retrieved contexts.",
     score_direction: "higher_is_better",

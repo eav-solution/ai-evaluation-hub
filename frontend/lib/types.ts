@@ -49,10 +49,18 @@ export type MetricInfo = {
 
 export type Metric = {
   key: string;
+  revision: string;
   framework: string;
+  category: "rag" | "agentic" | "general";
+  family: string;
   display_name: string;
   description: string;
+  sample_kind: "single_turn" | "agent_trace" | "conversation" | "multimodal";
   requires: string[];
+  resources: ("judge" | "embedding" | "multimodal")[];
+  config_schema: Record<string, unknown>;
+  default_config: Record<string, unknown>;
+  recommended: boolean;
   info: MetricInfo;
 };
 

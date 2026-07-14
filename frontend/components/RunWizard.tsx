@@ -9,8 +9,6 @@ import {MetricInfoButton, MetricInfoModal} from "@/components/MetricInfoModal";
 import {SearchableSelect} from "@/components/SearchableSelect";
 import type {Dataset, Metric, ProviderConnection, Run} from "@/lib/types";
 
-export const EMBEDDING_METRICS = new Set(["ragas.answer_relevancy"]);
-
 export function missingRequirements(metric: Metric, dataset?: Dataset) {
   if (!dataset) return metric.requires;
   return metric.requires.filter((field) => !dataset.schema_map[field]);
@@ -79,7 +77,9 @@ export function RunWizard({
   const connection = connections.find((item) => item.id === connectionId);
   const isCustom = connection?.connection_type === "openai_compatible";
   const chatModelOptions = modelOptions(connection?.connection_type, customModels);
-  const needsEmbedding = selected.some((key) => EMBEDDING_METRICS.has(key));
+  const needsEmbedding = selected.some((key) =>
+    metrics.find((metric) => metric.key === key)?.resources.includes("embedding"),
+  );
   // Embeddings need their own connection, limited to embedding-capable providers.
   const embeddingConnections = connections.filter(
     (item) => item.connection_type === "openai" || item.connection_type === "openai_compatible",

@@ -58,20 +58,31 @@ const customConnection: ProviderConnection = {
 
 const biasMetric: Metric = {
   key: "deepeval.bias",
+  revision: "1",
   framework: "deepeval",
+  category: "general",
+  family: "text_safety",
   display_name: "Bias",
   description: "Bias",
+  sample_kind: "single_turn",
   requires: [],
+  resources: ["judge"],
+  config_schema: {type: "object"},
+  default_config: {threshold: 0.5},
+  recommended: true,
   info: metricInfo,
 };
 
 const answerRelevancy: Metric = {
+  ...biasMetric,
   key: "ragas.answer_relevancy",
   framework: "ragas",
+  category: "rag",
+  family: "generation",
   display_name: "Answer Relevancy",
   description: "Relevancy",
-  requires: [],
-  info: metricInfo,
+  resources: ["judge", "embedding"],
+  default_config: {threshold: null},
 };
 
 beforeEach(() => {
@@ -143,6 +154,29 @@ describe("RunWizard", () => {
     expect(screen.getByLabelText("Embedding Model")).toBeDefined();
   });
 
+  it("discovers embedding requirements from metric resource metadata", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[
+          {
+            ...biasMetric,
+            key: "test.embedding",
+            display_name: "Metadata embedding",
+            resources: ["judge", "embedding"],
+          },
+        ]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Metadata embedding"));
+
+    expect(screen.getByLabelText("Embedding Connection")).toBeDefined();
+    expect(screen.getByLabelText("Embedding Model")).toBeDefined();
+  });
+
   it("disables metrics whose required columns are not mapped", () => {
     render(
       <RunWizard
@@ -150,11 +184,15 @@ describe("RunWizard", () => {
         initialDatasets={[{...dataset, schema_map: {input: "prompt", actual_output: "answer"}}]}
         initialMetrics={[
           {
+            ...biasMetric,
             key: "ragas.faithfulness",
             framework: "ragas",
+            category: "rag",
+            family: "generation",
             display_name: "Faithfulness",
             description: "Groundedness",
             requires: ["contexts"],
+            resources: ["judge"],
             info: metricInfo,
           },
           biasMetric,

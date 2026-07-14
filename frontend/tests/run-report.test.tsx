@@ -32,10 +32,18 @@ vi.mock("recharts", () => {
 const mockedApi = vi.mocked(api);
 const metric: Metric = {
   key: "ragas.faithfulness",
+  revision: "1",
   framework: "ragas",
+  category: "rag",
+  family: "generation",
   display_name: "Faithfulness",
   description: "Groundedness",
+  sample_kind: "single_turn",
   requires: ["contexts"],
+  resources: ["judge"],
+  config_schema: {type: "object"},
+  default_config: {threshold: null},
+  recommended: true,
   info: {
     meaning: "Claims must be grounded.",
     score_direction: "higher_is_better",
@@ -116,6 +124,9 @@ function result(row_index: number, input: string, score: number | null): RunResu
     },
     error: null,
     latency_ms: 10,
+    details: null,
+    usage: null,
+    estimated_cost: null,
   };
 }
 
