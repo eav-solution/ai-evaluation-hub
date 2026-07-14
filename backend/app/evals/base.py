@@ -2,7 +2,9 @@ from dataclasses import dataclass, field
 from math import isfinite
 from typing import Any, Callable, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.evals.json_schema import model_from_object_schema
 
 from app.evals.samples import SingleTurnSample
 
@@ -17,19 +19,94 @@ ResourceRole = Literal["judge", "embedding", "multimodal"]
 class MetricConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Optional pass threshold from 0 to 1.",
+    )
 
 
 class DeepEvalMetricConfig(MetricConfig):
+    threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Pass threshold from 0 to 1.",
+    )
+    include_reason: bool = Field(
+        default=True,
+        description="Ask the judge to explain its score.",
+    )
+    strict_mode: bool = Field(
+        default=False,
+        description="Require a perfect score to pass.",
+    )
+
+
+class GEvalConfig(MetricConfig):
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-
-
-class GEvalConfig(DeepEvalMetricConfig):
+    strict_mode: bool = False
     rubric: str = Field(
         default="Evaluate the quality of the response.",
         min_length=1,
         max_length=10_000,
+        description="Natural-language evaluation criteria.",
     )
+    evaluation_fields: list[
+        Literal[
+            "input",
+            "actual_output",
+            "expected_output",
+            "context",
+            "retrieval_contexts",
+        ]
+    ] = Field(
+        default_factory=lambda: ["input", "actual_output"],
+        min_length=1,
+        description="Sample fields available to the G-Eval judge.",
+    )
+
+    @field_validator("evaluation_fields")
+    @classmethod
+    def unique_evaluation_fields(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("evaluation_fields must not contain duplicates")
+        return value
+
+
+class PromptAlignmentConfig(DeepEvalMetricConfig):
+    prompt_instructions: list[str] = Field(
+        default_factory=lambda: ["Follow the instructions in the user input."],
+        min_length=1,
+        description="One prompt constraint per line.",
+    )
+
+    @field_validator("prompt_instructions")
+    @classmethod
+    def non_empty_instructions(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item for item in cleaned):
+            raise ValueError("prompt_instructions must not contain blank values")
+        return cleaned
+
+
+class JsonCorrectnessConfig(DeepEvalMetricConfig):
+    strict_mode: bool = True
+    expected_schema: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        description="Supported object JSON Schema for the output.",
+    )
+
+    @field_validator("expected_schema")
+    @classmethod
+    def supported_expected_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
+        model_from_object_schema(value)
+        return value
 
 
 @dataclass(frozen=True)

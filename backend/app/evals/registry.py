@@ -7,6 +7,7 @@ from app.evals.base import (
     ResourceRole,
 )
 from app.evals.metric_info import METRIC_INFO
+from pydantic import BaseModel
 
 
 def _framework_scorer(framework: str, metric: str):
@@ -28,9 +29,11 @@ def _adapter(
     family: str,
     requires: set[str] | None = None,
     resources: set[ResourceRole] | None = None,
+    config_model: type[BaseModel] | None = None,
+    requirement_fn=None,
 ) -> CallableAdapter:
     framework, metric = key.split(".", 1)
-    config_model = (
+    resolved_config_model = config_model or (
         GEvalConfig
         if key == "deepeval.geval"
         else (DeepEvalMetricConfig if framework == "deepeval" else MetricConfig)
@@ -45,8 +48,9 @@ def _adapter(
         description=description,
         requires=frozenset(requires or set()),
         scorer=_framework_scorer(framework, metric),
-        config_model=config_model,
+        config_model=resolved_config_model,
         info=METRIC_INFO[key],
+        requirement_fn=requirement_fn,
         resource_fn=lambda config: resource_roles,
     )
 
@@ -129,6 +133,10 @@ METRICS = {
             "Custom rubric evaluated by a judge model.",
             "general",
             "text_safety",
+            config_model=GEvalConfig,
+            requirement_fn=lambda config: (
+                frozenset(config["evaluation_fields"]) - {"input", "actual_output"}
+            ),
         ),
     ]
 }
