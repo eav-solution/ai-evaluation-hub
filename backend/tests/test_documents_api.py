@@ -206,7 +206,7 @@ def test_create_job_serializes_with_document_delete(
 
     from app import tasks
     from app.main import app
-    from app.models import GenerationJob, OutboxEvent, ProviderConnection
+    from app.models import OutboxEvent, ProviderConnection
     from app.security import encrypt_secret
 
     workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
