@@ -156,6 +156,22 @@ def _run_dataset_source(run: Run, dataset: Dataset) -> tuple[str, str]:
     return dataset.storage_path, dataset.format
 
 
+def _validated_metric_configs(run: Run) -> list[dict]:
+    validated = []
+    for stored in run.metric_config["metrics"]:
+        metric_key = stored["key"]
+        adapter = METRICS.get(metric_key)
+        if adapter is None:
+            raise ValueError(f"Unknown metric: {metric_key}")
+        raw = {
+            key: value
+            for key, value in stored.items()
+            if key != "key" and value is not None
+        }
+        validated.append({"key": metric_key, **adapter.validate_config(raw)})
+    return validated
+
+
 def _summarize(db, run: Run, results: list[RunResult]) -> None:
     for config in run.metric_config["metrics"]:
         values = [
@@ -283,7 +299,7 @@ def evaluate_run(run_id: str) -> None:
             dataset_format,
             settings.max_dataset_rows,
         )
-        metric_configs = run.metric_config["metrics"]
+        metric_configs = _validated_metric_configs(run)
         metric_keys = [config["key"] for config in metric_configs]
         stored_results = {
             result.row_index: result
@@ -434,7 +450,14 @@ def evaluate_run(run_id: str) -> None:
                         run.heartbeat_at = datetime.now(timezone.utc)
                         db.commit()
                         try:
-                            score = METRICS[metric_key].score(row, judge, config)
+                            scorer_config = {
+                                key: value
+                                for key, value in config.items()
+                                if key != "key"
+                            }
+                            score = METRICS[metric_key].score(
+                                row, judge, scorer_config
+                            )
                             terminal = {
                                 "score": score.score,
                                 "reason": score.reason,

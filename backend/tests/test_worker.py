@@ -226,6 +226,90 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
     ]
 
 
+def test_worker_revalidates_config_and_reapplies_defaults(db, monkeypatch):
+    from pydantic import ConfigDict, Field
+
+    from app import storage, tasks
+    from app.evals.base import CallableAdapter, MetricConfig, MetricScore
+    from app.models import Run
+
+    class TestConfig(MetricConfig):
+        model_config = ConfigDict(extra="forbid")
+        threshold: float = Field(default=0.7, ge=0, le=1)
+        include_reason: bool = True
+
+    run = _one_row_run(db, name="Revalidated config")
+    run.metric_config = {
+        "metrics": [
+            {
+                "key": "test.score",
+                "threshold": None,
+                "include_reason": None,
+            }
+        ]
+    }
+    db.commit()
+    monkeypatch.setattr(
+        storage, "get_object", lambda key: b'[{"prompt":"one","answer":"a"}]'
+    )
+    received = []
+
+    def score(row, judge, config):
+        received.append(config)
+        return MetricScore("test.score", 0.9, "ok", True)
+
+    adapter = CallableAdapter(
+        key="test.score",
+        framework="test",
+        display_name="Score",
+        description="Score",
+        requires=frozenset(),
+        scorer=score,
+        config_model=TestConfig,
+    )
+    monkeypatch.setattr(tasks, "METRICS", {"test.score": adapter})
+
+    tasks.evaluate_run.run(run.id)
+    db.expire_all()
+
+    assert db.get(Run, run.id).status == "completed"
+    assert received == [{"threshold": 0.7, "include_reason": True}]
+
+
+def test_worker_rejects_unknown_immutable_config_before_scorer(db, monkeypatch):
+    from app import storage, tasks
+    from app.evals.base import CallableAdapter, MetricScore
+    from app.models import Run
+
+    run = _one_row_run(db, name="Invalid immutable config")
+    run.metric_config = {
+        "metrics": [{"key": "test.score", "threshold": 0.5, "unknown": True}]
+    }
+    db.commit()
+    monkeypatch.setattr(
+        storage, "get_object", lambda key: b'[{"prompt":"one","answer":"a"}]'
+    )
+    calls = []
+    adapter = CallableAdapter(
+        key="test.score",
+        framework="test",
+        display_name="Score",
+        description="Score",
+        requires=frozenset(),
+        scorer=lambda row, judge, config: calls.append(row)
+        or MetricScore("test.score", 0.9, "ok", True),
+    )
+    monkeypatch.setattr(tasks, "METRICS", {"test.score": adapter})
+
+    tasks.evaluate_run.run(run.id)
+    db.expire_all()
+
+    stored = db.get(Run, run.id)
+    assert stored.status == "failed"
+    assert "unknown" in stored.error.lower()
+    assert calls == []
+
+
 def test_dispatch_outbox_event_enqueues_evaluation(db, monkeypatch):
     from app import tasks
     from app.models import OutboxEvent

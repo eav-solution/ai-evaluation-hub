@@ -46,6 +46,30 @@ def test_metric_catalog_contains_complete_v1_info(client):
             }
 
 
+def test_metric_presets_publish_approved_rag_sets(client):
+    response = client.get("/api/metrics/presets")
+    assert response.status_code == 200
+    presets = {item["id"]: item for item in response.json()}
+
+    assert presets["rag_live"]["metric_keys"] == [
+        "deepeval.answer_relevancy",
+        "deepeval.faithfulness",
+        "deepeval.contextual_relevancy",
+    ]
+    assert presets["rag_offline_references"]["metric_keys"] == [
+        "deepeval.answer_relevancy",
+        "deepeval.faithfulness",
+        "deepeval.contextual_relevancy",
+        "ragas.context_precision",
+        "ragas.context_recall",
+    ]
+    assert all(
+        {"id", "display_name", "description", "category", "mode_hint", "metric_keys"}
+        <= set(preset)
+        for preset in presets.values()
+    )
+
+
 def test_callable_adapter_accepts_score_boundaries():
     from app.evals.base import CallableAdapter, EvalRow, JudgeConfig, MetricScore
 
