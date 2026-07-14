@@ -99,6 +99,9 @@ export type RunResult = {
   scores: Record<string, Score>;
   error: string | null;
   latency_ms: number | null;
+  details: Record<string, unknown> | null;
+  usage: Record<string, unknown> | null;
+  estimated_cost: number | null;
 };
 
 export type DocumentFile = {

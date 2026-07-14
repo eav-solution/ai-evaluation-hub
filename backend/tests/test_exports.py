@@ -49,6 +49,9 @@ def _completed_run(db):
             }
         },
         latency_ms=42,
+        details={"trace": [{"type": "tool", "name": "search"}], "note": "café"},
+        usage={"input_tokens": 12, "output_tokens": 4},
+        estimated_cost=0.0012,
     )
     summary = RunSummary(
         workspace_id=workspace.id,
@@ -74,6 +77,12 @@ def test_export_serializers_preserve_nested_json_and_flatten_csv(
     _workspace, run, summaries, results = _completed_run(db)
     payload = build_payload(run, summaries, results)
     assert payload["results"][0]["scores"]["deepeval.bias"]["score"] == 0.8
+    assert payload["results"][0]["details"]["note"] == "café"
+    assert payload["results"][0]["usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 4,
+    }
+    assert payload["results"][0]["estimated_cost"] == 0.0012
     assert "endpoint_config" not in payload["run"]
     assert "judge_config" not in payload["run"]
 
@@ -81,6 +90,11 @@ def test_export_serializers_preserve_nested_json_and_flatten_csv(
     assert rows[0]["deepeval.bias.score"] == "0.8"
     assert rows[0]["deepeval.bias.passed"] == "true"
     assert rows[0]["contexts"] == '["Policy <one>"]'
+    assert rows[0]["details"] == (
+        '{"trace": [{"type": "tool", "name": "search"}], "note": "café"}'
+    )
+    assert rows[0]["usage"] == '{"input_tokens": 12, "output_tokens": 4}'
+    assert rows[0]["estimated_cost"] == "0.0012"
 
 
 def test_html_report_is_self_contained_and_escaped(client, auth_headers, db):
@@ -113,6 +127,11 @@ def test_export_download_routes(client, auth_headers, db):
     assert csv_response.headers["content-type"].startswith("text/csv")
     assert json_response.status_code == 200
     assert json_response.json()["run"]["id"] == run.id
+    result_response = client.get(f"{base}/results", headers=auth_headers)
+    assert result_response.status_code == 200
+    assert result_response.json()[0]["details"]["trace"][0]["name"] == "search"
+    assert result_response.json()[0]["usage"]["input_tokens"] == 12
+    assert result_response.json()[0]["estimated_cost"] == 0.0012
 
 
 def test_exports_are_tenant_scoped(client, auth_headers, db):

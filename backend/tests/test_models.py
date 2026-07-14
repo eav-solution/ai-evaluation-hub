@@ -53,6 +53,67 @@ def test_run_snapshot_and_lease_roundtrip(db):
     assert run.heartbeat_at is None
 
 
+def test_run_result_extensions_are_nullable_and_roundtrip(db):
+    from app.models import Dataset, Run, RunResult, User, Workspace
+
+    user = User(email="result-contract@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Result contract", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Rows",
+        format="json",
+        row_count=2,
+        storage_path=f"datasets/{workspace.id}/results.json",
+        schema_map={"input": "prompt", "actual_output": "answer"},
+    )
+    db.add(dataset)
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Extended results",
+        mode="static",
+        metric_config={"metrics": []},
+        judge_config={},
+    )
+    db.add(run)
+    db.flush()
+    db.add_all(
+        [
+            RunResult(
+                workspace_id=workspace.id,
+                run_id=run.id,
+                row_index=0,
+                input="Extended",
+                scores={},
+                details={"trace": [{"type": "tool", "name": "search"}]},
+                usage={"input_tokens": 12, "output_tokens": 4},
+                estimated_cost=0.0012,
+            ),
+            RunResult(
+                workspace_id=workspace.id,
+                run_id=run.id,
+                row_index=1,
+                input="Legacy",
+                scores={},
+            ),
+        ]
+    )
+    db.commit()
+
+    extended, legacy = db.query(RunResult).order_by(RunResult.row_index).all()
+    assert extended.details == {"trace": [{"type": "tool", "name": "search"}]}
+    assert extended.usage == {"input_tokens": 12, "output_tokens": 4}
+    assert extended.estimated_cost == 0.0012
+    assert legacy.details is None
+    assert legacy.usage is None
+    assert legacy.estimated_cost is None
+
+
 def test_generation_models_roundtrip(db):
     from app.models import (
         Document,

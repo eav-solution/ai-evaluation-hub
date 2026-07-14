@@ -150,6 +150,9 @@ class RunResult(Base):
     scores: Mapped[dict] = mapped_column(JSONB, default=dict)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    estimated_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class RunSummary(Base):

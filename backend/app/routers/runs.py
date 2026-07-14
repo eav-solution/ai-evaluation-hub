@@ -331,6 +331,9 @@ def list_results(
             "scores": item.scores,
             "error": item.error,
             "latency_ms": item.latency_ms,
+            "details": item.details,
+            "usage": item.usage,
+            "estimated_cost": item.estimated_cost,
         }
         for item in results
     ]

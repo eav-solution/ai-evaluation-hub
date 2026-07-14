@@ -17,6 +17,10 @@ def _datetime(value):
     return value.isoformat() if value is not None else None
 
 
+def _json(value):
+    return json.dumps(value, ensure_ascii=False) if value is not None else None
+
+
 def build_payload(
     run: Run,
     summaries: list[RunSummary],
@@ -58,6 +62,9 @@ def build_payload(
                 "scores": item.scores,
                 "error": item.error,
                 "latency_ms": item.latency_ms,
+                "details": item.details,
+                "usage": item.usage,
+                "estimated_cost": item.estimated_cost,
             }
             for item in results
         ],
@@ -74,6 +81,9 @@ def render_csv(run: Run, results: list[RunResult]) -> str:
         "contexts",
         "error",
         "latency_ms",
+        "details",
+        "usage",
+        "estimated_cost",
     ]
     metric_fields = [
         f"{key}.{field}"
@@ -89,13 +99,12 @@ def render_csv(run: Run, results: list[RunResult]) -> str:
             "input": result.input,
             "expected": result.expected,
             "actual": result.actual,
-            "contexts": (
-                json.dumps(result.contexts, ensure_ascii=False)
-                if result.contexts is not None
-                else None
-            ),
+            "contexts": _json(result.contexts),
             "error": result.error,
             "latency_ms": result.latency_ms,
+            "details": _json(result.details),
+            "usage": _json(result.usage),
+            "estimated_cost": result.estimated_cost,
         }
         for key in metric_keys:
             score = result.scores.get(key, {})
