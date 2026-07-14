@@ -488,6 +488,36 @@ def test_endpoint_response_mappings_reject_unknown_field(
     assert response.status_code == 422
 
 
+def test_static_run_does_not_use_unused_endpoint_response_mappings(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db, schema_map={"input": "prompt", "actual_output": "answer"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Static mappings stay static",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.contextual_relevancy"}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+            "endpoint_config": {
+                "url": "https://example.com/evaluate",
+                "response_mappings": {
+                    "actual_output": "$.answer",
+                    "retrieval_contexts": "$.documents",
+                },
+            },
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
+    assert "retrieval_contexts" in response.json()["detail"]
+
+
 def test_create_endpoint_run_requires_config(client, auth_headers, db, monkeypatch):
 
     workspace, dataset, connection = _ready_dataset(db, schema_map={"input": "prompt"})

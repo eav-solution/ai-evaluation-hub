@@ -95,8 +95,6 @@ def _object_model(
         )
         is_required = property_name in required
         default = ... if is_required else None
-        if not is_required:
-            annotation = annotation | None
         fields[property_name] = (
             annotation,
             Field(

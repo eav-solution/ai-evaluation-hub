@@ -10,7 +10,13 @@ const metric = {
   config_schema: {
     type: "object",
     properties: {
-      threshold: {type: "number", title: "Threshold", minimum: 0, maximum: 1},
+      threshold: {
+        title: "Threshold",
+        anyOf: [
+          {type: "number", minimum: 0, maximum: 1},
+          {type: "null"},
+        ],
+      },
       include_reason: {type: "boolean", title: "Include reason"},
       rubric: {type: "string", title: "Rubric"},
       evaluation_fields: {

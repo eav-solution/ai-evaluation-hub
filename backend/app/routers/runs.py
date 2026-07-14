@@ -163,7 +163,10 @@ def create_run(
         raise HTTPException(status_code=422, detail="Metrics must be unique")
     selected = []
     resource_roles = set()
-    available_fields = _available_sample_fields(dataset.schema_map, body.endpoint_config)
+    available_fields = _available_sample_fields(
+        dataset.schema_map,
+        body.endpoint_config if body.mode == "endpoint" else None,
+    )
     for index, item in enumerate(body.metrics):
         adapter = METRICS.get(item.key)
         if adapter is None:

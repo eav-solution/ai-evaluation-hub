@@ -12,7 +12,14 @@ type SchemaProperty = {
   maximum?: number;
   enum?: string[];
   items?: SchemaProperty;
+  anyOf?: SchemaProperty[];
 };
+
+function resolvedProperty(property: SchemaProperty): SchemaProperty {
+  if (property.type) return property;
+  const concrete = property.anyOf?.find((option) => option.type !== "null");
+  return concrete ? {...property, ...concrete, anyOf: property.anyOf} : property;
+}
 
 function fieldLabel(name: string, property: SchemaProperty) {
   return property.title ?? name.replaceAll("_", " ").replace(/^./, (value) => value.toUpperCase());
@@ -36,7 +43,7 @@ export function MetricConfigForm({
   const [jsonDrafts, setJsonDrafts] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       Object.entries(properties)
-        .filter(([, property]) => property.type === "object")
+        .filter(([, property]) => resolvedProperty(property).type === "object")
         .map(([name]) => [name, JSON.stringify(value[name] ?? {}, null, 2)]),
     ),
   );
@@ -48,7 +55,8 @@ export function MetricConfigForm({
 
   return (
     <div className="metric-config-form">
-      {Object.entries(properties).map(([name, property]) => {
+      {Object.entries(properties).map(([name, rawProperty]) => {
+        const property = resolvedProperty(rawProperty);
         const label = fieldLabel(name, property);
         if (property.type === "boolean") {
           return (

@@ -36,6 +36,14 @@ def test_object_schema_builds_nested_pydantic_model():
         model.model_validate({"name": 42, "profile": {"active": 1}})
     with pytest.raises(ValidationError):
         model.model_validate({"name": "x", "profile": {"active": True}, "items": ["1"]})
+    with pytest.raises(ValidationError):
+        model.model_validate(
+            {
+                "name": "x",
+                "profile": {"active": True},
+                "items": None,
+            }
+        )
 
 
 @pytest.mark.parametrize(
