@@ -7,6 +7,7 @@ import {
   CartesianGrid,
   PolarAngleAxis,
   PolarGrid,
+  PolarRadiusAxis,
   Radar,
   RadarChart,
   ResponsiveContainer,
@@ -195,12 +196,13 @@ export function RunReport({
           <section className="panel chart-panel">
             <h2>Metric profile</h2>
             <ResponsiveContainer width="100%" height={260}>
-              <RadarChart data={run.summaries}>
+              <RadarChart data={run.summaries} outerRadius="70%" margin={{top: 8, right: 64, bottom: 8, left: 64}}>
                 <PolarGrid />
                 <PolarAngleAxis
                   dataKey="metric_key"
                   tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
                 />
+                <PolarRadiusAxis domain={[0, 1]} tickCount={6} angle={90} orientation="middle" />
                 <Radar dataKey="mean" stroke="#635bff" fill="#635bff" fillOpacity={0.3} />
               </RadarChart>
             </ResponsiveContainer>

@@ -18,6 +18,7 @@ vi.mock("recharts", () => {
     CartesianGrid: Empty,
     PolarAngleAxis: Empty,
     PolarGrid: Empty,
+    PolarRadiusAxis: Empty,
     Radar: Empty,
     Tooltip: Empty,
     XAxis: Empty,
