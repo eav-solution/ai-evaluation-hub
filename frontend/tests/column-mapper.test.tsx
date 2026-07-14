@@ -5,6 +5,30 @@ import {describe, expect, it, vi} from "vitest";
 import {ColumnMapper} from "@/components/DatasetUpload";
 
 describe("ColumnMapper", () => {
+  it("groups compact Common and RAG mappings and selects the legacy contexts alias", () => {
+    render(
+      <ColumnMapper
+        dataset={{
+          id: "dataset-legacy",
+          name: "Legacy RAG",
+          format: "jsonl",
+          row_count: 1,
+          storage_path: "hidden",
+          schema_map: {contexts: "documents"},
+          preview: [{question: "Hi", answer: "Hello", documents: ["Greeting"]}],
+        }}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("group", {name: "Common / RAG"})).toBeInTheDocument();
+    expect(screen.getByLabelText("Input")).toBeInTheDocument();
+    expect(screen.getByLabelText("Actual output")).toBeInTheDocument();
+    expect(screen.getByLabelText("Expected output")).toBeInTheDocument();
+    expect(screen.getByLabelText("Retrieval contexts")).toHaveValue("documents");
+    expect(screen.getByLabelText("Trusted context")).toBeInTheDocument();
+  });
+
   it("offers columns that appear after the first preview row", () => {
     render(
       <ColumnMapper

@@ -7,9 +7,10 @@ import type {Dataset} from "@/lib/types";
 
 const fields = [
   ["input", "Input"],
-  ["expected_output", "Expected output"],
-  ["contexts", "Contexts"],
   ["actual_output", "Actual output"],
+  ["expected_output", "Expected output"],
+  ["retrieval_contexts", "Retrieval contexts"],
+  ["context", "Trusted context"],
 ] as const;
 
 export function ColumnMapper({
@@ -26,29 +27,37 @@ export function ColumnMapper({
   const [mapping, setMapping] = useState<Record<string, string>>(dataset.schema_map);
   return (
     <div className="mapper">
-      <div className="mapping-grid">
-        {fields.map(([key, label]) => (
-          <label key={key}>
-            {label}
-            <select
-              value={mapping[key] ?? ""}
-              onChange={(event) =>
-                setMapping((current) => {
-                  const next = {...current};
-                  if (event.target.value) next[key] = event.target.value;
-                  else delete next[key];
-                  return next;
-                })
-              }
-            >
-              <option value="">Not mapped</option>
-              {columns.map((column) => (
-                <option value={column} key={column}>{column}</option>
-              ))}
-            </select>
-          </label>
-        ))}
-      </div>
+      <fieldset className="mapping-group">
+        <legend>Common / RAG</legend>
+        <div className="mapping-grid">
+          {fields.map(([key, label]) => (
+            <label key={key}>
+              {label}
+              <select
+                value={
+                  key === "retrieval_contexts"
+                    ? mapping.retrieval_contexts ?? mapping.contexts ?? ""
+                    : mapping[key] ?? ""
+                }
+                onChange={(event) =>
+                  setMapping((current) => {
+                    const next = {...current};
+                    if (key === "retrieval_contexts") delete next.contexts;
+                    if (event.target.value) next[key] = event.target.value;
+                    else delete next[key];
+                    return next;
+                  })
+                }
+              >
+                <option value="">Not mapped</option>
+                {columns.map((column) => (
+                  <option value={column} key={column}>{column}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <button className="primary" onClick={() => onSave(mapping)} disabled={!mapping.input}>
         Save mapping
       </button>

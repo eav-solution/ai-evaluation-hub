@@ -118,6 +118,8 @@ small { font-size: 12px; }
 .file-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .file-picker:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px #deddfd; }
 .mapper { display: grid; gap: 16px; }
+.mapping-group { margin: 0; }
+.mapping-group legend { margin-bottom: 8px; color: var(--primary); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
 .mapping-grid, .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 2px; }
 .table-wrap { max-width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -130,6 +132,15 @@ tr:last-child td { border-bottom: 0; }
 .list-row span { display: grid; gap: 4px; }
 .list-row strong { font-size: 13.5px; }
 .list-row small { color: var(--subtle); }
+.dataset-list-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.dataset-list-header h2 { margin: 0; }
+.capability-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.capability-tabs button { min-height: 32px; padding: 6px 10px; }
+.capability-tabs button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary); color: #fff; }
+.dataset-row-main { display: grid; min-width: 0; gap: 5px; }
+.dataset-row-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.dataset-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.capability-badge { border-radius: 999px; background: var(--soft); color: var(--primary-dark); font-size: 9.5px; font-weight: 750; letter-spacing: .04em; padding: 3px 7px; text-transform: uppercase; }
 
 /* Generation and evaluation forms */
 .wizard { max-width: 100%; }
@@ -315,6 +326,7 @@ dialog.benchmark-info-modal::backdrop { background: rgba(24, 24, 38, .42); }
   .upload-drop { grid-column: auto; }
   .upload-zone > button.primary, .upload-zone > .notice { grid-column: auto; grid-row: auto; }
   .file-picker { justify-content: center; }
+  .dataset-list-header { align-items: stretch; flex-direction: column; }
   .generation-section-header { align-items: stretch; flex-direction: column; }
   .selection-count { align-self: flex-start; }
   .document-grid, .generation-content-grid, .generation-model-fields { grid-template-columns: 1fr; }
