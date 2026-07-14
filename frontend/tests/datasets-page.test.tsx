@@ -30,6 +30,12 @@ describe("DatasetsPage", () => {
             sample_kind: "single_turn",
             requires: [],
           },
+          {
+            key: "deepeval.answer_relevancy",
+            category: "rag",
+            sample_kind: "single_turn",
+            requires: [],
+          },
         ] as never;
       }
       if (path === "/api/workspaces/workspace-1/datasets") {
@@ -67,9 +73,9 @@ describe("DatasetsPage", () => {
     expect(ragRow).not.toBeNull();
     expect(generalRow).not.toBeNull();
     expect(within(ragRow as HTMLElement).getByText("RAG")).toBeInTheDocument();
-    expect(within(ragRow as HTMLElement).getByText("1 compatible metric")).toBeInTheDocument();
+    expect(within(ragRow as HTMLElement).getByText("3 compatible metrics")).toBeInTheDocument();
     expect(within(generalRow as HTMLElement).getByText("General")).toBeInTheDocument();
-    expect(within(generalRow as HTMLElement).getByText("1 compatible metric")).toBeInTheDocument();
+    expect(within(generalRow as HTMLElement).getByText("2 compatible metrics")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", {name: "RAG"}));
     expect(screen.getByText("RAG examples")).toBeInTheDocument();

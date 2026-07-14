@@ -228,6 +228,38 @@ def test_create_run_rejects_invalid_or_conflicting_metric_config(
     assert "conflict" in str(conflict.json()["detail"]).lower()
 
 
+def test_create_run_returns_422_for_reserved_json_schema_property(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(db)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Invalid JSON schema",
+            "mode": "static",
+            "metrics": [
+                {
+                    "key": "deepeval.json_correctness",
+                    "config": {
+                        "expected_schema": {
+                            "type": "object",
+                            "properties": {"model_dump": {"type": "string"}},
+                        }
+                    },
+                }
+            ],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "reserved property name" in str(response.json()["detail"])
+
+
 def test_create_run_preserves_legacy_metric_config_fields(
     client, auth_headers, db, monkeypatch
 ):
@@ -318,6 +350,46 @@ def test_create_run_rejects_missing_metric_mapping(
     )
     assert response.status_code == 422
     assert "contexts" in response.json()["detail"]
+
+
+def test_legacy_context_alias_is_limited_to_hallucination(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(db)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+    base = {
+        "dataset_id": dataset.id,
+        "mode": "static",
+        "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+    }
+
+    hallucination = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            **base,
+            "name": "Legacy hallucination",
+            "metrics": [{"key": "deepeval.hallucination"}],
+        },
+        headers=auth_headers,
+    )
+    geval = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            **base,
+            "name": "G-Eval needs trusted context",
+            "metrics": [
+                {
+                    "key": "deepeval.geval",
+                    "config": {"evaluation_fields": ["input", "context"]},
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+
+    assert hallucination.status_code == 201
+    assert geval.status_code == 422
+    assert "context" in geval.json()["detail"]
 
 
 def test_create_run_requires_provider_key(client, auth_headers, db, monkeypatch):

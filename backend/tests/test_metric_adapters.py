@@ -75,14 +75,32 @@ def test_ragas_context_relevance_maps_retrieval_fields(monkeypatch):
 def test_deepeval_adapter_uses_metric_success(monkeypatch):
     from app.evals import deepeval
     from app.evals.base import EvalRow, JudgeConfig
+    from app.evals.judges import UsageTracker
 
     class Metric:
         reason = "clean"
+        model = type("Model", (), {})()
+        model._evalhub_usage_tracker = UsageTracker(
+            provider="openai_compatible", model="model"
+        )
 
         def measure(self, test_case, **kwargs):
             assert test_case.actual_output == "answer"
-            assert test_case.context == ["legacy context"]
+            assert test_case.context is None
             assert test_case.retrieval_context == ["legacy context"]
+            self.model._evalhub_usage_tracker.record_response(
+                type(
+                    "Response",
+                    (),
+                    {
+                        "usage": type(
+                            "Usage",
+                            (),
+                            {"prompt_tokens": 5, "completion_tokens": 2},
+                        )()
+                    },
+                )()
+            )
             return 0.1
 
         def is_successful(self):
@@ -101,6 +119,36 @@ def test_deepeval_adapter_uses_metric_success(monkeypatch):
     )
     assert result.score == 0.1
     assert result.passed is True
+    assert result.usage == {"input_tokens": 5, "output_tokens": 2}
+    assert result.estimated_cost is None
+
+
+def test_deepeval_hallucination_keeps_legacy_context_fallback(monkeypatch):
+    from app.evals import deepeval
+    from app.evals.base import EvalRow, JudgeConfig
+
+    class Metric:
+        reason = "checked"
+
+        def measure(self, test_case, **kwargs):
+            assert test_case.context == ["legacy context"]
+            assert test_case.retrieval_context == ["legacy context"]
+            return 0.2
+
+        def is_successful(self):
+            return True
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: Metric())
+    deepeval.score_metric(
+        "hallucination",
+        EvalRow(
+            input="question",
+            actual_output="answer",
+            retrieval_contexts=["legacy context"],
+        ),
+        JudgeConfig("openai", "model", "key"),
+        {"threshold": 0.5},
+    )
 
 
 def test_deepeval_phase_2_metric_constructors_use_validated_config(monkeypatch):

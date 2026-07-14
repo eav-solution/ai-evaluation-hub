@@ -125,6 +125,7 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
             "metrics": [
                 {"key": "test.good", "threshold": 0.5},
                 {"key": "test.bad", "threshold": 0.5},
+                {"key": "test.other", "threshold": 0.5},
             ]
         },
         judge_config={"provider": "openai", "model": "model"},
@@ -170,11 +171,29 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
 
     def score_good(row, judge, config):
         scorer_calls.append(("test.good", row.input))
-        return MetricScore("test.good", 0.8, "ok", True)
+        return MetricScore(
+            "test.good",
+            0.8,
+            "ok",
+            True,
+            usage={"input_tokens": 2, "output_tokens": 1},
+            estimated_cost=0.001,
+        )
 
     def score_bad(row, judge, config):
         scorer_calls.append(("test.bad", row.input))
         raise RuntimeError("metric failed")
+
+    def score_other(row, judge, config):
+        scorer_calls.append(("test.other", row.input))
+        return MetricScore(
+            "test.other",
+            0.6,
+            "ok",
+            True,
+            usage={"input_tokens": 3, "output_tokens": 4},
+            estimated_cost=0.002,
+        )
 
     good = CallableAdapter(
         key="test.good",
@@ -192,10 +211,22 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
         requires=frozenset(),
         scorer=score_bad,
     )
+    other = CallableAdapter(
+        key="test.other",
+        framework="test",
+        display_name="Other",
+        description="Other",
+        requires=frozenset(),
+        scorer=score_other,
+    )
 
     from app import tasks
 
-    monkeypatch.setattr(tasks, "METRICS", {"test.good": good, "test.bad": bad})
+    monkeypatch.setattr(
+        tasks,
+        "METRICS",
+        {"test.good": good, "test.bad": bad, "test.other": other},
+    )
     tasks.evaluate_run.run(run.id)
     db.expire_all()
 
@@ -205,6 +236,9 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
     assert len(results) == 2
     assert results[0].input == "one"
     assert results[0].actual == "a"
+    assert results[0].details is None
+    assert results[0].usage == {"input_tokens": 5, "output_tokens": 5}
+    assert results[0].estimated_cost == 0.003
     assert requested_keys == [original_storage_path]
     assert results[0].scores["test.good"]["score"] == 0.8
     assert results[0].scores["test.bad"]["error"] == "metric failed"
@@ -221,8 +255,10 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
     assert scorer_calls == [
         ("test.good", "one"),
         ("test.bad", "one"),
+        ("test.other", "one"),
         ("test.good", "two"),
         ("test.bad", "two"),
+        ("test.other", "two"),
     ]
 
 
@@ -231,7 +267,7 @@ def test_worker_revalidates_config_and_reapplies_defaults(db, monkeypatch):
 
     from app import storage, tasks
     from app.evals.base import CallableAdapter, MetricConfig, MetricScore
-    from app.models import Run
+    from app.models import Run, RunSummary
 
     class TestConfig(MetricConfig):
         model_config = ConfigDict(extra="forbid")
@@ -274,6 +310,52 @@ def test_worker_revalidates_config_and_reapplies_defaults(db, monkeypatch):
 
     assert db.get(Run, run.id).status == "completed"
     assert received == [{"threshold": 0.7, "include_reason": True}]
+    assert db.query(RunSummary).filter_by(run_id=run.id).one().threshold == 0.7
+
+
+def test_worker_ignores_only_legacy_rubric_for_non_geval_metric(db, monkeypatch):
+    from app import storage, tasks
+    from app.evals.base import CallableAdapter, DeepEvalMetricConfig, MetricScore
+    from app.models import Run
+
+    run = _one_row_run(db, name="Legacy non-G-Eval rubric")
+    run.metric_config = {
+        "metrics": [
+            {
+                "key": "test.score",
+                "threshold": 0.5,
+                "rubric": "Historical value ignored by this metric",
+            }
+        ]
+    }
+    db.commit()
+    monkeypatch.setattr(
+        storage, "get_object", lambda key: b'[{"prompt":"one","answer":"a"}]'
+    )
+    received = []
+    adapter = CallableAdapter(
+        key="test.score",
+        framework="test",
+        display_name="Score",
+        description="Score",
+        requires=frozenset(),
+        scorer=lambda row, judge, config: received.append(config)
+        or MetricScore("test.score", 0.9, "ok", True),
+        config_model=DeepEvalMetricConfig,
+    )
+    monkeypatch.setattr(tasks, "METRICS", {"test.score": adapter})
+
+    tasks.evaluate_run.run(run.id)
+    db.expire_all()
+
+    assert db.get(Run, run.id).status == "completed"
+    assert received == [
+        {
+            "threshold": 0.5,
+            "include_reason": True,
+            "strict_mode": False,
+        }
+    ]
 
 
 def test_worker_rejects_unknown_immutable_config_before_scorer(db, monkeypatch):

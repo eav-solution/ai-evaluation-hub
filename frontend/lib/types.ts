@@ -57,6 +57,8 @@ export type Metric = {
   description: string;
   sample_kind: "single_turn" | "agent_trace" | "conversation" | "multimodal";
   requires: string[];
+  requirement_rule?: {config_field: string; exclude: string[]} | null;
+  requirement_aliases?: Record<string, string[]>;
   resources: ("judge" | "embedding" | "multimodal")[];
   config_schema: Record<string, unknown>;
   default_config: Record<string, unknown>;

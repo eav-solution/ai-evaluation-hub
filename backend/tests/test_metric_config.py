@@ -74,6 +74,43 @@ def test_object_schema_rejects_unsupported_or_invalid_shapes(schema, message):
         model_from_object_schema(schema)
 
 
+@pytest.mark.parametrize(
+    "property_name", ["model_dump", "model_config", "model_custom", "__base__"]
+)
+def test_object_schema_rejects_reserved_property_names(property_name):
+    from app.evals.json_schema import model_from_object_schema
+
+    with pytest.raises(ValueError, match="reserved property name"):
+        model_from_object_schema(
+            {
+                "type": "object",
+                "properties": {property_name: {"type": "string"}},
+            }
+        )
+
+
+def test_object_schema_rejects_excessive_depth_and_size():
+    from app.evals.json_schema import model_from_object_schema
+
+    nested = {"type": "string"}
+    for _ in range(21):
+        nested = {"type": "array", "items": nested}
+    with pytest.raises(ValueError, match="depth"):
+        model_from_object_schema(
+            {"type": "object", "properties": {"value": nested}}
+        )
+
+    with pytest.raises(ValueError, match="1,000"):
+        model_from_object_schema(
+            {
+                "type": "object",
+                "properties": {
+                    f"field_{index}": {"type": "string"} for index in range(1_001)
+                },
+            }
+        )
+
+
 def test_metric_specific_config_defaults_and_dynamic_requirements():
     from app.evals.base import JsonCorrectnessConfig, PromptAlignmentConfig
     from app.evals.registry import METRICS

@@ -20,6 +20,8 @@ _PRIMITIVES: dict[str, type] = {
     "number": StrictFloat,
     "boolean": StrictBool,
 }
+_MAX_DEPTH = 20
+_MAX_NODES = 1_000
 
 
 def _location(path: tuple[str, ...]) -> str:
@@ -39,18 +41,37 @@ def _annotation(
     *,
     path: tuple[str, ...],
     name: str,
+    depth: int,
+    nodes: list[int],
 ):
+    if depth > _MAX_DEPTH:
+        raise ValueError(f"{_location(path)} exceeds maximum schema depth {_MAX_DEPTH}")
+    nodes[0] += 1
+    if nodes[0] > _MAX_NODES:
+        raise ValueError("schema exceeds maximum size of 1,000 nodes")
     if not isinstance(schema, dict):
         raise ValueError(f"{_location(path)} must be an object")
     schema_type = schema.get("type")
     if schema_type == "object":
-        return _object_model(schema, path=path, name=name)
+        return _object_model(
+            schema,
+            path=path,
+            name=name,
+            depth=depth,
+            nodes=nodes,
+        )
     if schema_type == "array":
         _check_keys(schema, _ARRAY_KEYS, path)
         items = schema.get("items")
         if not isinstance(items, dict):
             raise ValueError(f"{_location((*path, 'items'))} must be an object")
-        item_type = _annotation(items, path=(*path, "items"), name=f"{name}Item")
+        item_type = _annotation(
+            items,
+            path=(*path, "items"),
+            name=f"{name}Item",
+            depth=depth + 1,
+            nodes=nodes,
+        )
         return list[item_type]
     if schema_type in _PRIMITIVES:
         _check_keys(schema, _COMMON_KEYS, path)
@@ -65,6 +86,8 @@ def _object_model(
     *,
     path: tuple[str, ...],
     name: str,
+    depth: int,
+    nodes: list[int],
 ) -> type[BaseModel]:
     _check_keys(schema, _OBJECT_KEYS, path)
     properties = schema.get("properties", {})
@@ -87,11 +110,21 @@ def _object_model(
             raise ValueError(
                 f"{_location((*path, 'properties'))} contains an invalid property name"
             )
+        if (
+            property_name.startswith("__")
+            or property_name.startswith("model_")
+            or hasattr(BaseModel, property_name)
+        ):
+            raise ValueError(
+                f"{_location((*path, 'properties', property_name))} is a reserved property name"
+            )
         property_path = (*path, "properties", property_name)
         annotation = _annotation(
             property_schema,
             path=property_path,
             name=f"{name}{property_name.title().replace('_', '')}",
+            depth=depth + 1,
+            nodes=nodes,
         )
         is_required = property_name in required
         default = ... if is_required else None
@@ -119,4 +152,4 @@ def model_from_object_schema(
         raise ValueError("schema must be an object")
     if schema.get("type") != "object":
         raise ValueError("schema.type must be object")
-    return _object_model(schema, path=(), name=name)
+    return _annotation(schema, path=(), name=name, depth=0, nodes=[0])

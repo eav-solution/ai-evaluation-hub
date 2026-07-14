@@ -163,17 +163,21 @@ def _validated_metric_configs(run: Run) -> list[dict]:
         adapter = METRICS.get(metric_key)
         if adapter is None:
             raise ValueError(f"Unknown metric: {metric_key}")
+        supported_fields = set(adapter.config_schema().get("properties", {}))
         raw = {
             key: value
             for key, value in stored.items()
             if key != "key" and value is not None
+            and not (key == "rubric" and key not in supported_fields)
         }
         validated.append({"key": metric_key, **adapter.validate_config(raw)})
     return validated
 
 
-def _summarize(db, run: Run, results: list[RunResult]) -> None:
-    for config in run.metric_config["metrics"]:
+def _summarize(
+    db, run: Run, results: list[RunResult], metric_configs: list[dict]
+) -> None:
+    for config in metric_configs:
         values = [
             result.scores[config["key"]]["score"]
             for result in results
@@ -199,6 +203,17 @@ def _summarize(db, run: Run, results: list[RunResult]) -> None:
                 threshold=config.get("threshold"),
             )
         )
+
+
+def _merge_usage(
+    current: dict[str, int] | None, added: dict[str, int] | None
+) -> dict[str, int] | None:
+    if added is None:
+        return current
+    merged = dict(current or {})
+    for key, value in added.items():
+        merged[key] = merged.get(key, 0) + value
+    return merged
 
 
 def _claim_run(db, run_id: str) -> tuple[Run, int] | None:
@@ -355,7 +370,11 @@ def evaluate_run(run_id: str) -> None:
                             ),
                             contexts=row.contexts,
                             scores={},
-                            details={"sample": {"context": row.context}},
+                            details=(
+                                {"sample": {"context": row.context}}
+                                if row.context is not None
+                                else None
+                            ),
                             error=(
                                 _INTERRUPTED_ENDPOINT
                                 if run.mode == "endpoint"
@@ -422,7 +441,11 @@ def evaluate_run(run_id: str) -> None:
                                 )
                                 result.actual = row.actual_output
                                 result.contexts = row.retrieval_contexts
-                                result.details = {"sample": {"context": row.context}}
+                                result.details = (
+                                    {"sample": {"context": row.context}}
+                                    if row.context is not None
+                                    else None
+                                )
                                 db.commit()
                         else:
                             result.latency_ms = round(
@@ -478,6 +501,11 @@ def evaluate_run(run_id: str) -> None:
                                 "error": None,
                                 "in_progress": False,
                             }
+                            result.usage = _merge_usage(result.usage, score.usage)
+                            if score.estimated_cost is not None:
+                                result.estimated_cost = (
+                                    result.estimated_cost or 0.0
+                                ) + score.estimated_cost
                         except Exception as exc:
                             terminal = {
                                 "score": None,
@@ -515,7 +543,7 @@ def evaluate_run(run_id: str) -> None:
 
         db.query(RunSummary).filter_by(run_id=run.id).delete()
         results = db.query(RunResult).filter_by(run_id=run.id).all()
-        _summarize(db, run, results)
+        _summarize(db, run, results, metric_configs)
         failed_rows = sum(result.error is not None for result in results)
         status = "failed" if failed_rows == len(results) else "completed"
         _finish_run(

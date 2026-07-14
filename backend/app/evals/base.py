@@ -128,6 +128,8 @@ class MetricScore:
     score: float
     reason: str | None
     passed: bool | None
+    usage: dict[str, int] | None = None
+    estimated_cost: float | None = None
 
 
 class MetricAdapter(Protocol):
@@ -148,6 +150,10 @@ class MetricAdapter(Protocol):
     def config_schema(self) -> dict[str, Any]: ...
 
     def requirements(self, config: dict | None = None) -> frozenset[str]: ...
+
+    def missing_requirements(
+        self, config: dict | None, available_fields: set[str]
+    ) -> frozenset[str]: ...
 
     def resources(self, config: dict | None = None) -> frozenset[ResourceRole]: ...
 
@@ -176,7 +182,9 @@ class CallableAdapter:
     config_model: type[BaseModel] = MetricConfig
     recommended: bool = True
     info: dict[str, Any] = field(default_factory=dict)
-    requirement_fn: Callable[[dict[str, Any]], frozenset[str]] | None = None
+    requirement_config_field: str | None = None
+    requirement_exclusions: frozenset[str] = frozenset()
+    requirement_aliases: dict[str, frozenset[str]] = field(default_factory=dict)
     resource_fn: Callable[[dict[str, Any]], frozenset[ResourceRole]] | None = None
 
     def validate_config(self, config: dict | None) -> dict[str, Any]:
@@ -190,9 +198,22 @@ class CallableAdapter:
 
     def requirements(self, config: dict | None = None) -> frozenset[str]:
         validated = self.validate_config(config)
-        if self.requirement_fn is not None:
-            return self.requirement_fn(validated)
+        if self.requirement_config_field is not None:
+            return (
+                frozenset(validated[self.requirement_config_field])
+                - self.requirement_exclusions
+            )
         return self.requires
+
+    def missing_requirements(
+        self, config: dict | None, available_fields: set[str]
+    ) -> frozenset[str]:
+        return frozenset(
+            required
+            for required in self.requirements(config)
+            if required not in available_fields
+            and not (self.requirement_aliases.get(required, frozenset()) & available_fields)
+        )
 
     def resources(self, config: dict | None = None) -> frozenset[ResourceRole]:
         validated = self.validate_config(config)
@@ -212,6 +233,17 @@ class CallableAdapter:
             "description": self.description,
             "sample_kind": self.sample_kind,
             "requires": sorted(self.requirements(config)),
+            "requirement_rule": (
+                {
+                    "config_field": self.requirement_config_field,
+                    "exclude": sorted(self.requirement_exclusions),
+                }
+                if self.requirement_config_field is not None
+                else None
+            ),
+            "requirement_aliases": {
+                key: sorted(value) for key, value in self.requirement_aliases.items()
+            },
             "resources": sorted(self.resources(config)),
             "config_schema": self.config_schema(),
             "default_config": config,
@@ -234,4 +266,6 @@ class CallableAdapter:
             score=value,
             reason=result.reason,
             passed=result.passed,
+            usage=result.usage,
+            estimated_cost=result.estimated_cost,
         )

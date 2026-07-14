@@ -32,7 +32,9 @@ def _adapter(
     requires: set[str] | None = None,
     resources: set[ResourceRole] | None = None,
     config_model: type[BaseModel] | None = None,
-    requirement_fn=None,
+    requirement_config_field: str | None = None,
+    requirement_exclusions: set[str] | None = None,
+    requirement_aliases: dict[str, set[str]] | None = None,
 ) -> CallableAdapter:
     framework, metric = key.split(".", 1)
     resolved_config_model = config_model or (
@@ -52,7 +54,12 @@ def _adapter(
         scorer=_framework_scorer(framework, metric),
         config_model=resolved_config_model,
         info=METRIC_INFO[key],
-        requirement_fn=requirement_fn,
+        requirement_config_field=requirement_config_field,
+        requirement_exclusions=frozenset(requirement_exclusions or set()),
+        requirement_aliases={
+            key: frozenset(value)
+            for key, value in (requirement_aliases or {}).items()
+        },
         resource_fn=lambda config: resource_roles,
     )
 
@@ -130,6 +137,7 @@ METRICS = {
             "general",
             "text_safety",
             {"context"},
+            requirement_aliases={"context": {"contexts"}},
         ),
         _adapter(
             "deepeval.prompt_alignment",
@@ -175,9 +183,8 @@ METRICS = {
             "general",
             "text_safety",
             config_model=GEvalConfig,
-            requirement_fn=lambda config: (
-                frozenset(config["evaluation_fields"]) - {"input", "actual_output"}
-            ),
+            requirement_config_field="evaluation_fields",
+            requirement_exclusions={"input", "actual_output"},
         ),
     ]
 }

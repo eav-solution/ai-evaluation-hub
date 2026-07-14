@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -16,6 +18,7 @@ class _FakeChoice:
 class _FakeCompletion:
     def __init__(self, content, finish_reason):
         self.choices = [_FakeChoice(content, finish_reason)]
+        self.usage = SimpleNamespace(prompt_tokens=12, completion_tokens=4)
 
 
 class _FakeCompletions:
@@ -53,6 +56,7 @@ class _FakeAnthropicMessage:
     def __init__(self, text, stop_reason):
         self.content = [_FakeBlock(text)]
         self.stop_reason = stop_reason
+        self.usage = SimpleNamespace(input_tokens=7, output_tokens=3)
 
 
 class _FakeAnthropicMessages:
@@ -187,6 +191,90 @@ def test_deepeval_judge_uses_judge_max_tokens(monkeypatch):
     )
     deepeval_llm(judge).generate("prompt")
     assert _FakeOpenAI.last["create_kwargs"]["max_tokens"] == settings.judge_max_tokens
+
+
+def test_deepeval_judge_tracks_usage_without_pricing_custom_models(monkeypatch):
+    import openai
+
+    from app.evals.base import JudgeConfig
+    from app.evals.judges import deepeval_llm, usage_snapshot
+
+    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
+    judge = JudgeConfig(
+        provider="openai_compatible",
+        model="gpt-4o-mini",
+        api_key=None,
+        base_url="http://h/v1",
+    )
+    llm = deepeval_llm(judge)
+    llm.generate("prompt")
+
+    usage, estimated_cost = usage_snapshot(llm)
+    assert usage == {"input_tokens": 12, "output_tokens": 4}
+    assert estimated_cost is None
+
+
+def test_native_openai_usage_uses_known_model_prices(monkeypatch):
+    import openai
+
+    from app.evals.base import JudgeConfig
+    from app.evals.judges import deepeval_llm, usage_snapshot
+
+    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
+    llm = deepeval_llm(JudgeConfig("openai", "gpt-4o-mini", "sk-test"))
+    llm.generate("prompt")
+
+    usage, estimated_cost = usage_snapshot(llm)
+    assert usage == {"input_tokens": 12, "output_tokens": 4}
+    assert estimated_cost == pytest.approx(4.2e-6)
+
+
+def test_native_anthropic_usage_uses_provider_token_fields(monkeypatch):
+    import anthropic
+
+    from app.evals.base import JudgeConfig
+    from app.evals.judges import deepeval_llm, usage_snapshot
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    llm = deepeval_llm(
+        JudgeConfig("anthropic", "claude-3-5-sonnet-20241022", "sk-test")
+    )
+    llm.generate("prompt")
+
+    usage, estimated_cost = usage_snapshot(llm)
+    assert usage == {"input_tokens": 7, "output_tokens": 3}
+    assert estimated_cost == pytest.approx(66e-6)
+
+
+def test_ragas_judge_tracks_usage_from_completion_hook(monkeypatch):
+    import ragas.llms as ragas_llms
+
+    from app.evals import judges
+    from app.evals.base import JudgeConfig
+
+    captured = {}
+
+    class Hooks:
+        def on(self, event, handler):
+            captured[event] = handler
+
+    llm = SimpleNamespace(client=SimpleNamespace(hooks=Hooks()))
+    monkeypatch.setattr(judges, "_async_client", lambda judge: object())
+    monkeypatch.setattr(ragas_llms, "llm_factory", lambda *args, **kwargs: llm)
+
+    result = judges.ragas_llm(
+        JudgeConfig("openai_compatible", "model", None, "http://h/v1")
+    )
+    captured["completion:response"](
+        SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=9, completion_tokens=2)
+        )
+    )
+
+    assert judges.usage_snapshot(result) == (
+        {"input_tokens": 9, "output_tokens": 2},
+        None,
+    )
 
 
 def test_ragas_embeddings_uses_separate_embedding_connection(monkeypatch):

@@ -4,6 +4,7 @@ import {useRouter} from "next/navigation";
 import {FormEvent, useEffect, useMemo, useState} from "react";
 
 import {api} from "@/lib/api";
+import {missingMetricRequirements} from "@/lib/metric-requirements";
 import {modelOptions} from "@/lib/model-options";
 import {MetricConfigForm} from "@/components/MetricConfigForm";
 import {MetricInfoButton, MetricInfoModal} from "@/components/MetricInfoModal";
@@ -14,17 +15,17 @@ export function missingRequirements(
   metric: Metric,
   dataset?: Dataset,
   responseMappings: Record<string, string> = {},
+  config: Record<string, unknown> = metric.default_config,
 ) {
   if (!dataset) return metric.requires;
   const fields = new Set(Object.keys(dataset.schema_map));
   if (fields.has("contexts")) {
-    fields.add("context");
     fields.add("retrieval_contexts");
   }
   Object.entries(responseMappings).forEach(([field, path]) => {
     if (path.trim()) fields.add(field);
   });
-  return metric.requires.filter((field) => !fields.has(field));
+  return missingMetricRequirements(metric, fields, config);
 }
 
 const categoryLabels = {rag: "RAG", agentic: "Agentic", general: "General"};
@@ -228,7 +229,12 @@ export function RunWizard({
   const staticReady = mode === "endpoint" || Boolean(dataset?.schema_map.actual_output);
   const selectedHaveMissingRequirements = selected.some((key) => {
     const metric = metrics.find((item) => item.key === key);
-    return !metric || missingRequirements(metric, dataset, activeResponseMappings).length > 0;
+    return !metric || missingRequirements(
+      metric,
+      dataset,
+      activeResponseMappings,
+      metricConfigs[key] ?? metric.default_config,
+    ).length > 0;
   });
   const selectedConfigInvalid = selected.some((key) => configValidity[key] === false);
 
@@ -254,7 +260,12 @@ export function RunWizard({
       presetMetrics.length !== preset.metric_keys.length ||
       presetMetrics.some(
         (metric) =>
-          missingRequirements(metric, dataset, activeResponseMappings).length > 0,
+          missingRequirements(
+            metric,
+            dataset,
+            activeResponseMappings,
+            metric.default_config,
+          ).length > 0,
       )
     );
   }
@@ -411,6 +422,7 @@ export function RunWizard({
                         metric,
                         dataset,
                         activeResponseMappings,
+                        metricConfigs[metric.key] ?? metric.default_config,
                       );
                       return (
                         <div

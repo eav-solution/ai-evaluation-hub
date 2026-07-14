@@ -1,5 +1,5 @@
 from app.evals.base import EvalRow, JudgeConfig, MetricScore
-from app.evals.judges import ragas_embeddings, ragas_llm
+from app.evals.judges import ragas_embeddings, ragas_llm, usage_snapshot
 
 
 def _make_metric(name: str, judge: JudgeConfig):
@@ -36,7 +36,7 @@ def score_metric(
         "faithfulness": {
             "user_input": row.input,
             "response": row.actual_output,
-            "retrieved_contexts": row.contexts,
+            "retrieved_contexts": row.retrieval_contexts,
         },
         "answer_relevancy": {
             "user_input": row.input,
@@ -49,12 +49,12 @@ def score_metric(
         "context_precision": {
             "user_input": row.input,
             "reference": row.expected_output,
-            "retrieved_contexts": row.contexts,
+            "retrieved_contexts": row.retrieval_contexts,
         },
         "context_recall": {
             "user_input": row.input,
             "reference": row.expected_output,
-            "retrieved_contexts": row.contexts,
+            "retrieved_contexts": row.retrieval_contexts,
         },
     }
     try:
@@ -63,9 +63,12 @@ def score_metric(
         raise ValueError(f"Unknown Ragas metric: {name}") from exc
     threshold = (config or {}).get("threshold")
     value = float(result.value)
+    usage, estimated_cost = usage_snapshot(getattr(metric, "llm", None))
     return MetricScore(
         metric=f"ragas.{name}",
         score=value,
         reason=result.reason,
         passed=value >= threshold if threshold is not None else None,
+        usage=usage,
+        estimated_cost=estimated_cost,
     )

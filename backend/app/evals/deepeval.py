@@ -1,6 +1,6 @@
 from app.evals.base import EvalRow, JudgeConfig, MetricScore
 from app.evals.json_schema import model_from_object_schema
-from app.evals.judges import deepeval_llm
+from app.evals.judges import deepeval_llm, usage_snapshot
 
 
 def _make_metric(name: str, judge: JudgeConfig, config: dict | None):
@@ -84,7 +84,11 @@ def score_metric(
         input=row.input,
         actual_output=row.actual_output,
         expected_output=row.expected_output,
-        context=row.context or row.retrieval_contexts,
+        context=(
+            row.context or row.retrieval_contexts
+            if name == "hallucination"
+            else row.context
+        ),
         retrieval_context=row.retrieval_contexts,
     )
     value = float(
@@ -94,9 +98,12 @@ def score_metric(
             _log_metric_to_confident=False,
         )
     )
+    usage, estimated_cost = usage_snapshot(getattr(metric, "model", None))
     return MetricScore(
         metric=f"deepeval.{name}",
         score=value,
         reason=metric.reason,
         passed=bool(metric.is_successful()),
+        usage=usage,
+        estimated_cost=estimated_cost,
     )

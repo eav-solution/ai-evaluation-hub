@@ -2,6 +2,7 @@ import {readFileSync} from "node:fs";
 import {resolve} from "node:path";
 
 import {fireEvent, render, screen, waitFor, within} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
 import {RunWizard} from "@/components/RunWizard";
@@ -109,6 +110,33 @@ const contextualRelevancy: Metric = {
   description: "Relevant retrieved evidence",
   requires: ["retrieval_contexts"],
 };
+
+const gevalMetric = {
+  ...biasMetric,
+  key: "deepeval.geval",
+  display_name: "G-Eval",
+  description: "Custom criteria",
+  requires: [],
+  requirement_rule: {
+    config_field: "evaluation_fields",
+    exclude: ["input", "actual_output"],
+  },
+  requirement_aliases: {},
+  config_schema: {
+    type: "object",
+    properties: {
+      evaluation_fields: {
+        type: "array",
+        title: "Evaluation fields",
+        items: {
+          type: "string",
+          enum: ["input", "actual_output", "context", "retrieval_contexts"],
+        },
+      },
+    },
+  },
+  default_config: {evaluation_fields: ["input", "actual_output"]},
+} as unknown as Metric;
 
 const ragLivePreset = {
   id: "rag_live",
@@ -244,6 +272,27 @@ describe("RunWizard", () => {
     expect(screen.getByText("Needs mapping: contexts")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {name: "General"}));
     expect(screen.getByLabelText("Bias")).toBeEnabled();
+  });
+
+  it("recomputes G-Eval requirements from the live adapter config", async () => {
+    const user = userEvent.setup();
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[
+          {...dataset, schema_map: {input: "prompt", actual_output: "answer"}},
+        ]}
+        initialMetrics={[gevalMetric]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("G-Eval"));
+    const fields = screen.getByLabelText("Evaluation fields");
+    await user.selectOptions(fields, ["input", "context"]);
+
+    expect(screen.getByText("Needs mapping: context")).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Launch evaluation"})).toBeDisabled();
   });
 
   it("organizes cards by capability, family, then framework and preserves selection", () => {

@@ -76,6 +76,53 @@ def test_extract_named_response_fields_and_legacy_alias():
     }
 
 
+def test_extract_named_context_fields_collects_wildcard_matches():
+    from app.endpoints import extract_response_fields
+
+    payload = {
+        "answers": ["first", "second"],
+        "documents": [{"text": "d1"}, {"text": "d2"}],
+    }
+
+    assert extract_response_fields(
+        payload,
+        {
+            "response_mappings": {
+                "actual_output": "$.answers[*]",
+                "retrieval_contexts": "$.documents[*].text",
+            }
+        },
+    ) == {
+        "actual_output": "first",
+        "retrieval_contexts": ["d1", "d2"],
+    }
+
+
+def test_extract_named_context_fields_always_produce_lists():
+    from app.endpoints import extract_response_fields
+
+    payload = {
+        "answer": "response",
+        "documents": [{"text": "only"}],
+        "fact": "single trusted fact",
+    }
+
+    assert extract_response_fields(
+        payload,
+        {
+            "response_mappings": {
+                "actual_output": "$.answer",
+                "retrieval_contexts": "$.documents[*].text",
+                "context": "$.fact",
+            }
+        },
+    ) == {
+        "actual_output": "response",
+        "retrieval_contexts": ["only"],
+        "context": ["single trusted fact"],
+    }
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [

@@ -70,3 +70,15 @@ def test_current_metric_capability_metadata_matches_the_approved_catalog():
     assert {
         key: (adapter.category, adapter.family) for key, adapter in METRICS.items()
     } == expected
+
+
+def test_catalog_exposes_dynamic_requirements_and_legacy_aliases():
+    from app.evals.registry import METRICS
+
+    assert METRICS["deepeval.geval"].catalog_entry()["requirement_rule"] == {
+        "config_field": "evaluation_fields",
+        "exclude": ["actual_output", "input"],
+    }
+    assert METRICS["deepeval.hallucination"].catalog_entry()[
+        "requirement_aliases"
+    ] == {"context": ["contexts"]}

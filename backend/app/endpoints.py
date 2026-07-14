@@ -59,12 +59,16 @@ def extract_response_fields(payload, config: dict) -> dict[str, Any]:
         matches = parse(expression).find(payload)
         if not matches:
             raise ValueError(f"Response JSONPath for {field} matched no values")
-        value = matches[0].value
-        values[field] = (
-            value
-            if field != "actual_output" or isinstance(value, str)
-            else json.dumps(value)
-        )
+        if field == "actual_output":
+            answer = matches[0].value
+            values[field] = answer if isinstance(answer, str) else json.dumps(answer)
+            continue
+        if len(matches) > 1:
+            values[field] = [match.value for match in matches]
+        else:
+            # A directly matched list is already the context list; anything else is one item.
+            single = matches[0].value
+            values[field] = single if isinstance(single, list) else [single]
     return values
 
 

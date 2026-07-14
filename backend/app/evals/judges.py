@@ -1,5 +1,7 @@
 import asyncio
 import json
+from dataclasses import dataclass
+from typing import Any
 
 from app.config import settings
 from app.connections import openai_client_args
@@ -9,6 +11,72 @@ _OPENAI_TYPES = ("openai", "openai_compatible")
 _TRUNCATED_MESSAGE = (
     "Judge hit the token limit; raise JUDGE_MAX_TOKENS or shorten the input"
 )
+
+
+def _usage_value(usage: Any, *names: str) -> int:
+    for name in names:
+        value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        if value is not None:
+            return int(value)
+    return 0
+
+
+def _model_prices(provider: str, model: str) -> tuple[float, float] | None:
+    if provider == "openai":
+        from deepeval.models.llms.constants import OPENAI_MODELS_DATA
+
+        registry = OPENAI_MODELS_DATA
+    elif provider == "anthropic":
+        from deepeval.models.llms.constants import ANTHROPIC_MODELS_DATA
+
+        registry = ANTHROPIC_MODELS_DATA
+    else:
+        return None
+    if model not in registry:
+        return None
+    model_data = registry[model]
+    if model_data.input_price is None or model_data.output_price is None:
+        return None
+    return float(model_data.input_price), float(model_data.output_price)
+
+
+@dataclass
+class UsageTracker:
+    provider: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    observed: bool = False
+
+    def record_response(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self.input_tokens += _usage_value(usage, "input_tokens", "prompt_tokens")
+        self.output_tokens += _usage_value(
+            usage, "output_tokens", "completion_tokens"
+        )
+        self.observed = True
+
+    def snapshot(self) -> tuple[dict[str, int] | None, float | None]:
+        if not self.observed:
+            return None, None
+        usage = {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+        }
+        prices = _model_prices(self.provider, self.model)
+        estimated_cost = (
+            self.input_tokens * prices[0] + self.output_tokens * prices[1]
+            if prices is not None
+            else None
+        )
+        return usage, estimated_cost
+
+
+def usage_snapshot(model: Any) -> tuple[dict[str, int] | None, float | None]:
+    tracker = getattr(model, "_evalhub_usage_tracker", None)
+    return tracker.snapshot() if isinstance(tracker, UsageTracker) else (None, None)
 
 
 def _client(judge: JudgeConfig):
@@ -62,11 +130,15 @@ def ragas_llm(judge: JudgeConfig):
     # OpenAI-compatible gateways speak the OpenAI wire format; the base URL is
     # carried by the client, so ragas is told provider="openai".
     provider = "openai" if judge.provider in _OPENAI_TYPES else judge.provider
-    return llm_factory(
+    llm = llm_factory(
         judge.model,
         provider=provider,
         client=_async_client(judge),
     )
+    tracker = UsageTracker(judge.provider, judge.model)
+    llm.client.hooks.on("completion:response", tracker.record_response)
+    llm._evalhub_usage_tracker = tracker
+    return llm
 
 
 def ragas_embeddings(judge: JudgeConfig):
@@ -92,6 +164,7 @@ def deepeval_llm(judge: JudgeConfig):
     class ProviderLLM(DeepEvalBaseLLM):
         def __init__(self):
             self.client = _client(judge)
+            self._evalhub_usage_tracker = UsageTracker(judge.provider, judge.model)
 
         def load_model(self):
             return self.client
@@ -105,6 +178,7 @@ def deepeval_llm(judge: JudgeConfig):
                         response_format=schema,
                         max_tokens=settings.judge_max_tokens,
                     )
+                    self._evalhub_usage_tracker.record_response(response)
                     if response.choices[0].finish_reason == "length":
                         raise ValueError(_TRUNCATED_MESSAGE)
                     return response.choices[0].message.parsed
@@ -113,6 +187,7 @@ def deepeval_llm(judge: JudgeConfig):
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=settings.judge_max_tokens,
                 )
+                self._evalhub_usage_tracker.record_response(response)
                 if response.choices[0].finish_reason == "length":
                     raise ValueError(_TRUNCATED_MESSAGE)
                 return response.choices[0].message.content or ""
@@ -125,6 +200,7 @@ def deepeval_llm(judge: JudgeConfig):
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=settings.judge_max_tokens,
                 )
+                self._evalhub_usage_tracker.record_response(response)
                 if response.choices[0].finish_reason == "length":
                     raise ValueError(_TRUNCATED_MESSAGE)
                 text = response.choices[0].message.content or ""
@@ -137,6 +213,7 @@ def deepeval_llm(judge: JudgeConfig):
                 max_tokens=settings.judge_max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._evalhub_usage_tracker.record_response(response)
             if response.stop_reason == "max_tokens":
                 raise ValueError(_TRUNCATED_MESSAGE)
             text = "".join(block.text for block in response.content if hasattr(block, "text"))

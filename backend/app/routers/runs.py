@@ -33,7 +33,7 @@ def _available_sample_fields(
 ) -> set[str]:
     fields = set(schema_map)
     if "contexts" in fields:
-        fields.update({"context", "retrieval_contexts"})
+        fields.add("retrieval_contexts")
     if endpoint_config is not None:
         response_fields = set(endpoint_config.resolved_response_mappings())
         fields.update(response_fields)
@@ -187,7 +187,7 @@ def create_run(
                     }
                 )
             raise HTTPException(status_code=422, detail=errors) from exc
-        missing = adapter.requirements(config) - available_fields
+        missing = adapter.missing_requirements(config, available_fields)
         if missing:
             field = sorted(missing)[0]
             raise HTTPException(
