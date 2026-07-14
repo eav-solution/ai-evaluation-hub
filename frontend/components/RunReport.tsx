@@ -24,6 +24,10 @@ export function metricLabel(metricsByKey: Map<string, Metric>, key: string): str
   return metricsByKey.get(key)?.display_name ?? key;
 }
 
+function roundTooltipValue(value: unknown) {
+  return typeof value === "number" ? value.toFixed(3) : (value as string);
+}
+
 export function RunReport({
   workspaceId,
   runId,
@@ -175,7 +179,10 @@ export function RunReport({
                 width={140}
                 tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
               />
-              <Tooltip />
+              <Tooltip
+                formatter={(value) => roundTooltipValue(value)}
+                labelFormatter={(key) => metricLabel(metricsByKey, String(key))}
+              />
               <Bar dataKey="mean" fill="#635bff" radius={[0, 7, 7, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -203,7 +210,10 @@ export function RunReport({
                   tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
                 />
                 <PolarRadiusAxis domain={[0, 1]} tick={false} axisLine={false} />
-                <Tooltip labelFormatter={(key) => metricLabel(metricsByKey, String(key))} />
+                <Tooltip
+                  formatter={(value) => roundTooltipValue(value)}
+                  labelFormatter={(key) => metricLabel(metricsByKey, String(key))}
+                />
                 <Radar dataKey="mean" stroke="#635bff" fill="#635bff" fillOpacity={0.3} />
               </RadarChart>
             </ResponsiveContainer>
