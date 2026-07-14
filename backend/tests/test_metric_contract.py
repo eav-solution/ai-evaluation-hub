@@ -21,6 +21,8 @@ def test_adapter_rejects_unknown_or_invalid_config():
     from app.evals.registry import METRICS
 
     adapter = METRICS["deepeval.geval"]
+    assert adapter.category == "general"
+    assert adapter.family == "text_safety"
     with pytest.raises(ValidationError):
         adapter.validate_config({"threshold": 2})
     with pytest.raises(ValidationError):
@@ -42,3 +44,24 @@ def test_metric_catalog_is_generated_from_adapter_metadata(client):
     assert metric["resources"] == ["embedding", "judge"]
     assert metric["recommended"] is True
     assert metric["config_schema"]["additionalProperties"] is False
+
+
+def test_current_metric_capability_metadata_matches_the_approved_catalog():
+    from app.evals.registry import METRICS
+
+    expected = {
+        "ragas.faithfulness": ("rag", "generation"),
+        "ragas.answer_relevancy": ("rag", "generation"),
+        "ragas.context_precision": ("rag", "retrieval"),
+        "ragas.context_recall": ("rag", "retrieval"),
+        "deepeval.answer_relevancy": ("rag", "generation"),
+        "deepeval.faithfulness": ("rag", "generation"),
+        "deepeval.hallucination": ("general", "text_safety"),
+        "deepeval.toxicity": ("general", "text_safety"),
+        "deepeval.bias": ("general", "text_safety"),
+        "deepeval.geval": ("general", "text_safety"),
+    }
+
+    assert {
+        key: (adapter.category, adapter.family) for key, adapter in METRICS.items()
+    } == expected

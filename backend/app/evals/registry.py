@@ -128,7 +128,7 @@ METRICS = {
             "G-Eval",
             "Custom rubric evaluated by a judge model.",
             "general",
-            "custom_judge",
+            "text_safety",
         ),
     ]
 }
