@@ -62,8 +62,8 @@ def test_object_schema_rejects_composition_and_unknown_keywords():
 
 
 def test_metric_specific_config_defaults_and_requirements():
-    prompt = METRICS["deepeval.prompt_alignment"]
-    assert prompt.default_config()["prompt_instructions"]
+    prompt = PromptAlignmentConfig.model_validate({})
+    assert prompt.prompt_instructions
     geval = METRICS["deepeval.geval"]
     config = geval.validate_config({"evaluation_fields": ["expected_output"]})
     assert geval.requirements(config) == frozenset({"expected_output"})
