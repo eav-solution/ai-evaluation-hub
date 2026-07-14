@@ -202,7 +202,13 @@ export function RunReport({
                   dataKey="metric_key"
                   tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
                 />
-                <PolarRadiusAxis domain={[0, 1]} tickCount={6} angle={90} orientation="middle" />
+                <PolarRadiusAxis
+                  domain={[0, 1]}
+                  tickCount={3}
+                  angle={45}
+                  tick={{fontSize: 10, fill: "#8a8f98"}}
+                  tickFormatter={(value: number) => (value === 0 ? "" : value.toString())}
+                />
                 <Radar dataKey="mean" stroke="#635bff" fill="#635bff" fillOpacity={0.3} />
               </RadarChart>
             </ResponsiveContainer>
