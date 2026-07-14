@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -11,6 +12,7 @@ from app.endpoints import EndpointConfig
 from app.evals.registry import EMBEDDING_METRICS, METRICS
 from app.models import (
     Dataset,
+    OutboxEvent,
     ProviderConnection,
     Run,
     RunResult,
@@ -20,6 +22,7 @@ from app.models import (
 from app.security import decrypt_secret, encrypt_secret
 
 router = APIRouter(prefix="/api/workspaces/{workspace_id}/runs", tags=["runs"])
+logger = logging.getLogger(__name__)
 
 EMBEDDING_CONNECTION_TYPES = {"openai", "openai_compatible"}
 
@@ -98,12 +101,6 @@ def _get_run(run_id: str, workspace_id: str, db: Session) -> Run:
     if row is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return row
-
-
-def _enqueue(run_id: str) -> None:
-    from app.tasks import evaluate_run
-
-    evaluate_run.delay(run_id)
 
 
 @router.post("", status_code=201)
@@ -208,12 +205,28 @@ def create_run(
             ),
             "embedding_model": body.judge.embedding_model if embedding_connection else None,
         },
+        definition_snapshot={"schema_map": dict(dataset.schema_map)},
         status="pending",
         progress_total=dataset.row_count,
     )
     db.add(row)
+    db.flush()
+    event = OutboxEvent(
+        kind="evaluate_run",
+        dedupe_key=f"evaluation:{row.id}",
+        payload={"run_id": row.id},
+    )
+    db.add(event)
     db.commit()
-    _enqueue(row.id)
+    from app.tasks import dispatch_outbox_event
+
+    try:
+        dispatch_outbox_event(event.id)
+    except Exception:
+        logger.exception(
+            "Immediate evaluation dispatch failed for run %s; outbox will retry",
+            row.id,
+        )
     return _run_out(row)
 
 

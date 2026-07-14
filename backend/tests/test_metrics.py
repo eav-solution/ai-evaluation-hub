@@ -41,39 +41,45 @@ def test_metric_catalog_contains_complete_v1_info(client):
             }
 
 
-def test_callable_adapter_normalizes_score():
+def test_callable_adapter_accepts_score_boundaries():
     from app.evals.base import CallableAdapter, EvalRow, JudgeConfig, MetricScore
 
-    adapter = CallableAdapter(
-        key="test",
-        framework="test",
-        display_name="Test",
-        description="Test",
-        requires=frozenset(),
-        scorer=lambda row, judge, config: MetricScore("test", 1.4, "ok", None),
-    )
-    score = adapter.score(
-        EvalRow("input", "actual", None, None),
-        JudgeConfig("openai", "model", "key"),
-    )
-    assert score.score == 1.0
+    for value in (0.0, 1.0):
+        adapter = CallableAdapter(
+            key="test",
+            framework="test",
+            display_name="Test",
+            description="Test",
+            requires=frozenset(),
+            scorer=lambda row, judge, config, value=value: MetricScore(
+                "test", value, "ok", None
+            ),
+        )
+        score = adapter.score(
+            EvalRow("input", "actual", None, None),
+            JudgeConfig("openai", "model", "key"),
+        )
+        assert score.score == value
 
 
-def test_callable_adapter_rejects_non_finite_score():
+def test_callable_adapter_rejects_invalid_score():
     import pytest
 
     from app.evals.base import CallableAdapter, EvalRow, JudgeConfig, MetricScore
 
-    adapter = CallableAdapter(
-        key="test",
-        framework="test",
-        display_name="Test",
-        description="Test",
-        requires=frozenset(),
-        scorer=lambda row, judge, config: MetricScore("test", float("nan"), None, None),
-    )
-    with pytest.raises(ValueError, match="finite"):
-        adapter.score(
-            EvalRow("input", "actual", None, None),
-            JudgeConfig("openai", "model", "key"),
+    for value in (-0.01, 1.01, float("nan"), float("inf")):
+        adapter = CallableAdapter(
+            key="test",
+            framework="test",
+            display_name="Test",
+            description="Test",
+            requires=frozenset(),
+            scorer=lambda row, judge, config, value=value: MetricScore(
+                "test", value, None, None
+            ),
         )
+        with pytest.raises(ValueError, match="score in the range 0..1"):
+            adapter.score(
+                EvalRow("input", "actual", None, None),
+                JudgeConfig("openai", "model", "key"),
+            )

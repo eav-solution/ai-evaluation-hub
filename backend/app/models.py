@@ -118,6 +118,11 @@ class Run(Base):
     metric_config: Mapped[dict] = mapped_column(JSONB)
     endpoint_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     judge_config: Mapped[dict] = mapped_column(JSONB)
+    definition_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     progress_done: Mapped[int] = mapped_column(Integer, default=0)
     progress_total: Mapped[int] = mapped_column(Integer, default=0)

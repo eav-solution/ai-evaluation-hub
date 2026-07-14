@@ -63,11 +63,14 @@ class CallableAdapter:
         config: dict | None = None,
     ) -> MetricScore:
         result = self.scorer(row, judge, config)
-        if not isfinite(result.score):
-            raise ValueError(f"{self.key} returned a non-finite score")
+        value = float(result.score)
+        if not isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(
+                f"{self.key} must return a finite score in the range 0..1"
+            )
         return MetricScore(
             metric=self.key,
-            score=max(0.0, min(1.0, float(result.score))),
+            score=value,
             reason=result.reason,
             passed=result.passed,
         )

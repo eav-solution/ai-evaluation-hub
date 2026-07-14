@@ -23,5 +23,9 @@ celery_app.conf.update(
             "task": "app.tasks.recover_stale_generation_jobs",
             "schedule": 60.0,
         },
+        "recover-stale-evaluation-runs": {
+            "task": "app.tasks.recover_stale_evaluation_runs",
+            "schedule": 60.0,
+        },
     },
 )

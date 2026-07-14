@@ -43,6 +43,11 @@ def dispatch_outbox_event(event_id: str) -> bool:
                     args=[event.payload["job_id"]],
                     task_id=f"generation-{event.id}",
                 )
+            elif event.kind == "evaluate_run":
+                evaluate_run.apply_async(
+                    args=[event.payload["run_id"]],
+                    task_id=f"evaluation-{event.id}",
+                )
             elif event.kind == "delete_object":
                 storage.delete_object(event.payload["key"])
             else:
@@ -129,6 +134,15 @@ def _eval_row(
     )
 
 
+def _run_schema_map(run: Run, dataset: Dataset) -> dict[str, str]:
+    mapping = (run.definition_snapshot or {}).get("schema_map")
+    return (
+        dict(mapping)
+        if isinstance(mapping, dict) and mapping
+        else dict(dataset.schema_map)
+    )
+
+
 def _summarize(db, run: Run, results: list[RunResult]) -> None:
     for config in run.metric_config["metrics"]:
         values = [
@@ -158,23 +172,76 @@ def _summarize(db, run: Run, results: list[RunResult]) -> None:
         )
 
 
+def _claim_run(db, run_id: str) -> tuple[Run, int] | None:
+    now = datetime.now(timezone.utc)
+    claimed = (
+        db.query(Run)
+        .filter_by(id=run_id, status="pending")
+        .update(
+            {
+                Run.status: "running",
+                Run.error: None,
+                Run.attempt: Run.attempt + 1,
+                Run.heartbeat_at: now,
+                Run.finished_at: None,
+            },
+            synchronize_session=False,
+        )
+    )
+    if claimed != 1:
+        db.rollback()
+        return None
+    db.commit()
+    run = db.get(Run, run_id)
+    return run, run.attempt
+
+
+def _finish_run(db, run_id: str, attempt: int, values: dict) -> bool:
+    updated = (
+        db.query(Run)
+        .filter_by(id=run_id, status="running", attempt=attempt)
+        .update(values, synchronize_session=False)
+    )
+    db.commit()
+    return updated == 1
+
+
+_INTERRUPTED_ENDPOINT = "Endpoint request interrupted before its result was persisted"
+_INTERRUPTED_METRIC = "Evaluation interrupted before its result was persisted"
+
+
+def _result_complete(result: RunResult, metric_keys: list[str]) -> bool:
+    if result.error is not None:
+        return True
+    scores = result.scores or {}
+    return all(
+        key in scores and not scores[key].get("in_progress", False)
+        for key in metric_keys
+    )
+
+
+def _stored_row(result: RunResult) -> EvalRow:
+    return EvalRow(
+        input=result.input,
+        actual_output=result.actual or "",
+        expected_output=result.expected,
+        contexts=result.contexts,
+    )
+
+
 @celery_app.task(name="app.tasks.evaluate_run")
 def evaluate_run(run_id: str) -> None:
     db = SessionLocal()
-    run = db.get(Run, run_id)
-    if run is None or run.status == "cancelled":
+    claimed = _claim_run(db, run_id)
+    if claimed is None:
         db.close()
         return
+    run, attempt = claimed
     try:
-        run.status = "running"
-        run.error = None
-        db.query(RunResult).filter_by(run_id=run.id).delete()
-        db.query(RunSummary).filter_by(run_id=run.id).delete()
-        db.commit()
-
         dataset = db.get(Dataset, run.dataset_id)
         if dataset is None:
             raise ValueError("Dataset not found")
+        schema_map = _run_schema_map(run, dataset)
         runtime = resolve_connection(db, run.workspace_id, run.judge_config)
         embedding_connection_id = run.judge_config.get("embedding_connection_id")
         if embedding_connection_id:
@@ -199,119 +266,268 @@ def evaluate_run(run_id: str) -> None:
             dataset.format,
             settings.max_dataset_rows,
         )
+        metric_configs = run.metric_config["metrics"]
+        metric_keys = [config["key"] for config in metric_configs]
+        stored_results = {
+            result.row_index: result
+            for result in db.query(RunResult).filter_by(run_id=run.id).all()
+        }
         run.progress_total = len(source_rows)
+        run.progress_done = sum(
+            _result_complete(result, metric_keys)
+            for result in stored_results.values()
+        )
+        run.heartbeat_at = datetime.now(timezone.utc)
         db.commit()
 
-        results = []
         for offset in range(0, len(source_rows), settings.eval_batch_size):
-            db.refresh(run)
-            if run.status == "cancelled":
-                return
             batch = source_rows[offset : offset + settings.eval_batch_size]
             for index, source in enumerate(batch, start=offset):
+                db.refresh(run)
+                if run.status != "running" or run.attempt != attempt:
+                    return
                 started = time.perf_counter()
                 row = None
-                endpoint_latency = None
-                try:
-                    row = _eval_row(
-                        source,
-                        dataset.schema_map,
-                        "" if run.mode == "endpoint" else _MISSING,
-                    )
-                    if run.mode == "endpoint":
-                        if run.endpoint_config is None:
-                            raise ValueError("Endpoint configuration is missing")
-                        answer, _payload, endpoint_latency = call_endpoint(
-                            run.endpoint_config,
-                            row,
-                            encrypted_headers=True,
-                        )
-                        row = EvalRow(
-                            input=row.input,
-                            actual_output=answer,
-                            expected_output=row.expected_output,
-                            contexts=row.contexts,
-                        )
-                except Exception as exc:
-                    result = RunResult(
-                        workspace_id=run.workspace_id,
-                        run_id=run.id,
-                        row_index=index,
-                        input=(
-                            row.input
-                            if row is not None
-                            else _text(source.get(dataset.schema_map.get("input"))) or ""
-                        ),
-                        expected=row.expected_output if row is not None else None,
-                        actual=None,
-                        contexts=row.contexts if row is not None else None,
-                        scores={},
-                        error=str(exc),
-                        latency_ms=round((time.perf_counter() - started) * 1000),
-                    )
-                    db.add(result)
-                    results.append(result)
-                    continue
-
-                scores = {}
-                for config in run.metric_config["metrics"]:
+                result = stored_results.get(index)
+                if result is None:
                     try:
-                        score = METRICS[config["key"]].score(row, judge, config)
-                        scores[config["key"]] = {
-                            "score": score.score,
-                            "reason": score.reason,
-                            "passed": score.passed,
-                            "error": None,
-                        }
+                        row = _eval_row(
+                            source,
+                            schema_map,
+                            "" if run.mode == "endpoint" else _MISSING,
+                        )
                     except Exception as exc:
-                        scores[config["key"]] = {
+                        result = RunResult(
+                            workspace_id=run.workspace_id,
+                            run_id=run.id,
+                            row_index=index,
+                            input=_text(source.get(schema_map.get("input"))) or "",
+                            expected=None,
+                            actual=None,
+                            contexts=None,
+                            scores={},
+                            error=str(exc),
+                            latency_ms=round((time.perf_counter() - started) * 1000),
+                        )
+                        db.add(result)
+                        db.commit()
+                    else:
+                        result = RunResult(
+                            workspace_id=run.workspace_id,
+                            run_id=run.id,
+                            row_index=index,
+                            input=row.input,
+                            expected=row.expected_output,
+                            actual=(None if run.mode == "endpoint" else row.actual_output),
+                            contexts=row.contexts,
+                            scores={},
+                            error=(
+                                _INTERRUPTED_ENDPOINT
+                                if run.mode == "endpoint"
+                                else None
+                            ),
+                            latency_ms=None,
+                        )
+                        db.add(result)
+                        run.heartbeat_at = datetime.now(timezone.utc)
+                        db.commit()
+                        if run.mode == "endpoint":
+                            try:
+                                if run.endpoint_config is None:
+                                    raise ValueError("Endpoint configuration is missing")
+                                answer, _payload, endpoint_latency = call_endpoint(
+                                    run.endpoint_config,
+                                    row,
+                                    encrypted_headers=True,
+                                )
+                            except Exception as exc:
+                                result.error = str(exc)
+                                result.latency_ms = round(
+                                    (time.perf_counter() - started) * 1000
+                                )
+                                db.commit()
+                            else:
+                                db.refresh(run)
+                                if run.status != "running" or run.attempt != attempt:
+                                    return
+                                result.actual = answer
+                                result.error = None
+                                result.latency_ms = round(endpoint_latency)
+                                row = EvalRow(
+                                    input=row.input,
+                                    actual_output=answer,
+                                    expected_output=row.expected_output,
+                                    contexts=row.contexts,
+                                )
+                                db.commit()
+                        else:
+                            result.latency_ms = round(
+                                (time.perf_counter() - started) * 1000
+                            )
+                            db.commit()
+                    stored_results[index] = result
+                elif result.error is None:
+                    row = _stored_row(result)
+
+                if result.error is None and row is not None:
+                    for config in metric_configs:
+                        metric_key = config["key"]
+                        scores = dict(result.scores or {})
+                        existing = scores.get(metric_key)
+                        if existing is not None:
+                            if existing.get("in_progress", False):
+                                scores[metric_key] = {
+                                    **existing,
+                                    "error": _INTERRUPTED_METRIC,
+                                    "in_progress": False,
+                                }
+                                result.scores = scores
+                                db.commit()
+                            continue
+
+                        db.refresh(run)
+                        if run.status != "running" or run.attempt != attempt:
+                            return
+                        scores[metric_key] = {
                             "score": None,
                             "reason": None,
                             "passed": None,
-                            "error": str(exc),
+                            "error": _INTERRUPTED_METRIC,
+                            "in_progress": True,
                         }
-                row_error = (
-                    "All metrics failed"
-                    if all(item["score"] is None for item in scores.values())
-                    else None
-                )
-                result = RunResult(
-                    workspace_id=run.workspace_id,
-                    run_id=run.id,
-                    row_index=index,
-                    input=row.input,
-                    expected=row.expected_output,
-                    actual=row.actual_output,
-                    contexts=row.contexts,
-                    scores=scores,
-                    error=row_error,
-                    latency_ms=round(
-                        endpoint_latency
-                        if endpoint_latency is not None
-                        else (time.perf_counter() - started) * 1000
-                    ),
-                )
-                db.add(result)
-                results.append(result)
-            run.progress_done = min(offset + len(batch), len(source_rows))
-            db.commit()
+                        result.scores = scores
+                        run.heartbeat_at = datetime.now(timezone.utc)
+                        db.commit()
+                        try:
+                            score = METRICS[metric_key].score(row, judge, config)
+                            terminal = {
+                                "score": score.score,
+                                "reason": score.reason,
+                                "passed": score.passed,
+                                "error": None,
+                                "in_progress": False,
+                            }
+                        except Exception as exc:
+                            terminal = {
+                                "score": None,
+                                "reason": None,
+                                "passed": None,
+                                "error": str(exc),
+                                "in_progress": False,
+                            }
+                        db.refresh(run)
+                        if run.status != "running" or run.attempt != attempt:
+                            return
+                        scores = dict(result.scores or {})
+                        scores[metric_key] = terminal
+                        result.scores = scores
+                        run.heartbeat_at = datetime.now(timezone.utc)
+                        db.commit()
 
+                    scores = result.scores or {}
+                    result.error = (
+                        "All metrics failed"
+                        if all(
+                            scores.get(key, {}).get("score") is None
+                            for key in metric_keys
+                        )
+                        else None
+                    )
+                    db.commit()
+
+                run.progress_done = sum(
+                    _result_complete(item, metric_keys)
+                    for item in stored_results.values()
+                )
+                run.heartbeat_at = datetime.now(timezone.utc)
+                db.commit()
+
+        db.query(RunSummary).filter_by(run_id=run.id).delete()
+        results = db.query(RunResult).filter_by(run_id=run.id).all()
         _summarize(db, run, results)
         failed_rows = sum(result.error is not None for result in results)
-        run.status = "failed" if failed_rows == len(results) else "completed"
-        run.error = "All rows failed" if run.status == "failed" else None
-        run.finished_at = datetime.now(timezone.utc)
-        db.commit()
+        status = "failed" if failed_rows == len(results) else "completed"
+        _finish_run(
+            db,
+            run.id,
+            attempt,
+            {
+                Run.status: status,
+                Run.error: "All rows failed" if status == "failed" else None,
+                Run.finished_at: datetime.now(timezone.utc),
+                Run.heartbeat_at: None,
+            },
+        )
     except Exception as exc:
         db.rollback()
-        run = db.get(Run, run_id)
-        if run is not None:
-            run.status = "failed"
-            run.error = str(exc)
-            run.finished_at = datetime.now(timezone.utc)
+        _finish_run(
+            db,
+            run_id,
+            attempt,
+            {
+                Run.status: "failed",
+                Run.error: str(exc),
+                Run.finished_at: datetime.now(timezone.utc),
+                Run.heartbeat_at: None,
+            },
+        )
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.recover_stale_evaluation_runs")
+def recover_stale_evaluation_runs() -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.evaluation_lease_seconds
+    )
+    db = SessionLocal()
+    event_ids: list[str] = []
+    try:
+        candidate_ids = [
+            row[0]
+            for row in db.query(Run.id)
+            .filter(
+                Run.status == "running",
+                (Run.heartbeat_at.is_(None)) | (Run.heartbeat_at < cutoff),
+            )
+            .all()
+        ]
+        for run_id in candidate_ids:
+            dedupe_key = f"evaluation:{run_id}"
+            event = (
+                db.query(OutboxEvent)
+                .filter_by(dedupe_key=dedupe_key)
+                .with_for_update()
+                .one_or_none()
+            )
+            run = (
+                db.query(Run)
+                .filter_by(id=run_id, status="running")
+                .with_for_update(skip_locked=True)
+                .populate_existing()
+                .one_or_none()
+            )
+            if run is None or (
+                run.heartbeat_at is not None and run.heartbeat_at >= cutoff
+            ):
+                db.rollback()
+                continue
+            run.status = "pending"
+            run.heartbeat_at = None
+            if event is None:
+                event = OutboxEvent(
+                    kind="evaluate_run",
+                    dedupe_key=dedupe_key,
+                    payload={"run_id": run.id},
+                )
+                db.add(event)
+            db.flush()
+            event_ids.append(event.id)
             db.commit()
     finally:
         db.close()
+    for event_id in event_ids:
+        dispatch_outbox_event(event_id)
 
 
 @celery_app.task(name="app.tasks.generate_dataset")

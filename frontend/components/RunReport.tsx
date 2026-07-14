@@ -24,10 +24,6 @@ export function metricLabel(metricsByKey: Map<string, Metric>, key: string): str
   return metricsByKey.get(key)?.display_name ?? key;
 }
 
-function roundTooltipValue(value: unknown) {
-  return typeof value === "number" ? value.toFixed(3) : (value as string);
-}
-
 export function RunReport({
   workspaceId,
   runId,
@@ -84,6 +80,33 @@ export function RunReport({
     () => new Map(metrics.map((metric) => [metric.key, metric])),
     [metrics],
   );
+  const comparisonSummaries = useMemo(
+    () =>
+      (run?.summaries ?? []).flatMap((summary) => {
+        const direction = metricsByKey.get(summary.metric_key)?.info.score_direction;
+        if (!direction) return [];
+        return [{
+          ...summary,
+          raw_mean: summary.mean,
+          comparison_score:
+            direction === "lower_is_better" ? 1 - summary.mean : summary.mean,
+          score_direction: direction,
+        }];
+      }),
+    [metricsByKey, run],
+  );
+  const comparisonTooltip = (
+    _value: unknown,
+    _name: unknown,
+    item: {payload?: {raw_mean: number; score_direction: string}},
+  ) => {
+    const point = item.payload;
+    if (!point) return ["", "Comparable quality"];
+    const direction = point.score_direction === "lower_is_better"
+      ? "Lower is better"
+      : "Higher is better";
+    return [`Raw ${point.raw_mean.toFixed(3)} · ${direction}`, "Comparable quality"];
+  };
   const rows = useMemo(() => {
     const filtered = failuresOnly
       ? results.filter(
@@ -93,11 +116,19 @@ export function RunReport({
         )
       : results;
     if (!sortMetric) return filtered;
-    return [...filtered].sort(
-      (a, b) =>
-        (b.scores[sortMetric]?.score ?? -1) - (a.scores[sortMetric]?.score ?? -1),
-    );
-  }, [failuresOnly, results, sortMetric]);
+    const direction = metricsByKey.get(sortMetric)?.info.score_direction;
+    return [...filtered].sort((a, b) => {
+      const left = a.scores[sortMetric]?.score;
+      const right = b.scores[sortMetric]?.score;
+      if (left === null || left === undefined) {
+        return right === null || right === undefined ? a.row_index - b.row_index : 1;
+      }
+      if (right === null || right === undefined) return -1;
+      if (direction === "lower_is_better") return left - right;
+      if (direction === "higher_is_better") return right - left;
+      return a.row_index - b.row_index;
+    });
+  }, [failuresOnly, metricsByKey, results, sortMetric]);
 
   const histogram = useMemo(() => {
     const buckets = [
@@ -160,6 +191,13 @@ export function RunReport({
             )}
             <strong>{summary.mean.toFixed(3)}</strong>
             <span>{summary.pass_rate === null ? "No threshold" : `${(summary.pass_rate * 100).toFixed(0)}% pass`}</span>
+            <span>
+              {metricsByKey.get(summary.metric_key)?.info.score_direction === "lower_is_better"
+                ? "Lower is better"
+                : metricsByKey.get(summary.metric_key)?.info.score_direction === "higher_is_better"
+                  ? "Higher is better"
+                  : "Direction unavailable"}
+            </span>
           </article>
         ))}
       </div>
@@ -168,9 +206,9 @@ export function RunReport({
 
       <div className="chart-grid">
         <section className="panel chart-panel">
-          <h2>Mean by metric</h2>
+          <h2>Comparable quality</h2>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={run.summaries} layout="vertical" margin={{left: 24, right: 12}}>
+            <BarChart data={comparisonSummaries} layout="vertical" margin={{left: 24, right: 12}}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
               <XAxis type="number" domain={[0, 1]} />
               <YAxis
@@ -180,10 +218,10 @@ export function RunReport({
                 tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
               />
               <Tooltip
-                formatter={(value) => roundTooltipValue(value)}
+                formatter={comparisonTooltip}
                 labelFormatter={(key) => metricLabel(metricsByKey, String(key))}
               />
-              <Bar dataKey="mean" fill="#635bff" radius={[0, 7, 7, 0]} />
+              <Bar dataKey="comparison_score" fill="#635bff" radius={[0, 7, 7, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </section>
@@ -199,11 +237,11 @@ export function RunReport({
             </BarChart>
           </ResponsiveContainer>
         </section>
-        {run.summaries.length > 2 && (
+        {comparisonSummaries.length > 2 && (
           <section className="panel chart-panel">
             <h2>Metric profile</h2>
             <ResponsiveContainer width="100%" height={260}>
-              <RadarChart data={run.summaries} outerRadius="70%" margin={{top: 8, right: 64, bottom: 8, left: 64}}>
+              <RadarChart data={comparisonSummaries} outerRadius="70%" margin={{top: 8, right: 64, bottom: 8, left: 64}}>
                 <PolarGrid />
                 <PolarAngleAxis
                   dataKey="metric_key"
@@ -211,10 +249,10 @@ export function RunReport({
                 />
                 <PolarRadiusAxis domain={[0, 1]} tick={false} axisLine={false} />
                 <Tooltip
-                  formatter={(value) => roundTooltipValue(value)}
+                  formatter={comparisonTooltip}
                   labelFormatter={(key) => metricLabel(metricsByKey, String(key))}
                 />
-                <Radar dataKey="mean" stroke="#635bff" fill="#635bff" fillOpacity={0.3} />
+                <Radar dataKey="comparison_score" stroke="#635bff" fill="#635bff" fillOpacity={0.3} />
               </RadarChart>
             </ResponsiveContainer>
           </section>

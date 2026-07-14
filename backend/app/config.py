@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     celery_task_always_eager: bool = False
     eval_batch_size: int = 8
+    evaluation_lease_seconds: int = 900
     allow_private_endpoints: bool = False
     endpoint_timeout_seconds: float = 60
     endpoint_retries: int = 2

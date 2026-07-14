@@ -16,6 +16,43 @@ def test_create_user_workspace_membership(db):
     assert m.role == "owner"
 
 
+def test_run_snapshot_and_lease_roundtrip(db):
+    from app.models import Dataset, Run, User, Workspace
+
+    user = User(email="run-lease@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Run lease", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Rows",
+        format="json",
+        row_count=1,
+        storage_path=f"datasets/{workspace.id}/rows.json",
+        schema_map={"input": "prompt", "actual_output": "answer"},
+    )
+    db.add(dataset)
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Snapshot",
+        mode="static",
+        metric_config={"metrics": []},
+        judge_config={},
+        definition_snapshot={"schema_map": {"input": "prompt"}},
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    assert run.definition_snapshot == {"schema_map": {"input": "prompt"}}
+    assert run.attempt == 0
+    assert run.heartbeat_at is None
+
+
 def test_generation_models_roundtrip(db):
     from app.models import (
         Document,

@@ -94,11 +94,12 @@ def _ready_dataset(db, provider="openai", schema_map=None):
 
 
 def test_create_run_validates_and_enqueues(client, auth_headers, db, monkeypatch):
-    from app.routers import runs
+    from app import tasks
+    from app.models import OutboxEvent, Run
 
     workspace, dataset, connection = _ready_dataset(db)
     queued = []
-    monkeypatch.setattr(runs, "_enqueue", queued.append)
+    monkeypatch.setattr(tasks, "dispatch_outbox_event", queued.append)
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -112,18 +113,52 @@ def test_create_run_validates_and_enqueues(client, auth_headers, db, monkeypatch
     )
     assert response.status_code == 201
     assert response.json()["status"] == "pending"
-    assert queued == [response.json()["id"]]
+    stored = db.get(Run, response.json()["id"])
+    assert stored.definition_snapshot == {"schema_map": dataset.schema_map}
+    event = db.query(OutboxEvent).filter_by(kind="evaluate_run").one()
+    assert event.dedupe_key == f"evaluation:{stored.id}"
+    assert event.payload == {"run_id": stored.id}
+    assert queued == [event.id]
+
+
+def test_create_run_logs_dispatch_failure_and_keeps_outbox(
+    client, auth_headers, db, monkeypatch, caplog
+):
+    from app import tasks
+    from app.models import OutboxEvent
+
+    workspace, dataset, connection = _ready_dataset(db)
+
+    def fail_dispatch(event_id):
+        raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(tasks, "dispatch_outbox_event", fail_dispatch)
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Durable evaluation",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.bias"}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    event = db.query(OutboxEvent).filter_by(kind="evaluate_run").one()
+    assert event.payload == {"run_id": response.json()["id"]}
+    assert "Immediate evaluation dispatch failed" in caplog.text
 
 
 def test_create_run_rejects_missing_metric_mapping(
     client, auth_headers, db, monkeypatch
 ):
-    from app.routers import runs
 
     workspace, dataset, connection = _ready_dataset(
         db, schema_map={"input": "prompt", "actual_output": "answer"}
     )
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -140,10 +175,9 @@ def test_create_run_rejects_missing_metric_mapping(
 
 
 def test_create_run_requires_provider_key(client, auth_headers, db, monkeypatch):
-    from app.routers import runs
 
     workspace, dataset, connection = _ready_dataset(db, provider=None)
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -160,10 +194,9 @@ def test_create_run_requires_provider_key(client, auth_headers, db, monkeypatch)
 
 
 def test_cancel_run(client, auth_headers, db, monkeypatch):
-    from app.routers import runs
 
     workspace, dataset, connection = _ready_dataset(db)
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     created = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -184,10 +217,9 @@ def test_cancel_run(client, auth_headers, db, monkeypatch):
 
 
 def test_nonmember_cannot_access_run(client, auth_headers, db, monkeypatch):
-    from app.routers import runs
 
     workspace, dataset, connection = _ready_dataset(db)
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     run_id = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -214,13 +246,12 @@ def test_create_endpoint_run_encrypts_headers(
     client, auth_headers, db, monkeypatch
 ):
     from app.models import Run
-    from app.routers import runs
     from app.security import decrypt_secret
 
     workspace, dataset, connection = _ready_dataset(
         db, schema_map={"input": "prompt", "contexts": "contexts"}
     )
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
 
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
@@ -252,12 +283,11 @@ def test_create_endpoint_run_encrypts_headers(
 def test_create_endpoint_run_requires_config(
     client, auth_headers, db, monkeypatch
 ):
-    from app.routers import runs
 
     workspace, dataset, connection = _ready_dataset(
         db, schema_map={"input": "prompt"}
     )
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
 
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
@@ -295,7 +325,7 @@ def test_create_run_custom_connection_valid_model(client, auth_headers, db, monk
 
     workspace, dataset, _ = _ready_dataset(db, provider=None)
     connection = _custom_connection(db, workspace.id)
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     monkeypatch.setattr(runs, "discover_models", lambda base_url, api_key: ["chat-a", "chat-b"])
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
@@ -318,7 +348,7 @@ def test_create_run_custom_connection_stale_model(client, auth_headers, db, monk
 
     workspace, dataset, _ = _ready_dataset(db, provider=None)
     connection = _custom_connection(db, workspace.id)
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     monkeypatch.setattr(runs, "discover_models", lambda base_url, api_key: ["chat-a"])
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
@@ -336,7 +366,6 @@ def test_create_run_custom_connection_stale_model(client, auth_headers, db, monk
 
 def test_create_run_foreign_connection_rejected(client, auth_headers, db, monkeypatch):
     from app.models import User, Workspace
-    from app.routers import runs
 
     workspace, dataset, _ = _ready_dataset(db, provider=None)
     other_user = User(email="other-ws@example.com", password_hash="x")
@@ -346,7 +375,7 @@ def test_create_run_foreign_connection_rejected(client, auth_headers, db, monkey
     db.add(other_ws)
     db.flush()
     foreign = _custom_connection(db, other_ws.id, name="Foreign")
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -368,7 +397,7 @@ def test_create_run_embedding_from_separate_connection(client, auth_headers, db,
     workspace, dataset, _ = _ready_dataset(db, provider=None)
     judge_conn = _custom_connection(db, workspace.id, name="LLM Gateway")
     embed_conn = _custom_connection(db, workspace.id, name="Embed Gateway")
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     monkeypatch.setattr(runs, "discover_models", lambda base_url, api_key: ["chat-a", "embed-x"])
 
     # missing embedding connection → 422
@@ -425,7 +454,7 @@ def test_create_run_embedding_connection_must_support_embeddings(client, auth_he
     )
     db.add(anthropic_conn)
     db.commit()
-    monkeypatch.setattr(runs, "_enqueue", lambda run_id: None)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
     monkeypatch.setattr(runs, "discover_models", lambda base_url, api_key: ["chat-a"])
 
     response = client.post(
