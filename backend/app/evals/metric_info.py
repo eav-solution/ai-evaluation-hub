@@ -108,7 +108,7 @@ METRIC_INFO: dict[str, MetricInfo] = {
             ),
             ("Data", "Add source material for recurring unsupported questions."),
         ),
-        "required_data": ["input", "actual_output", "contexts"],
+        "required_data": ["input", "actual_output", "retrieval_contexts"],
     },
     "ragas.answer_relevancy": {
         "meaning": (
@@ -236,7 +236,7 @@ METRIC_INFO: dict[str, MetricInfo] = {
                 "Improve chunk boundaries and remove duplicate or boilerplate chunks.",
             ),
         ),
-        "required_data": ["input", "expected_output", "contexts"],
+        "required_data": ["input", "expected_output", "retrieval_contexts"],
     },
     "ragas.context_recall": {
         "meaning": "Measures how much of the reference answer is supported by the retrieved contexts.",
@@ -289,7 +289,7 @@ METRIC_INFO: dict[str, MetricInfo] = {
                 "Add missing documents and use chunks that preserve complete facts.",
             ),
         ),
-        "required_data": ["input", "expected_output", "contexts"],
+        "required_data": ["input", "expected_output", "retrieval_contexts"],
     },
     "deepeval.answer_relevancy": {
         "meaning": "Measures the share of answer statements that are relevant to the user's input.",
@@ -383,7 +383,7 @@ METRIC_INFO: dict[str, MetricInfo] = {
             ),
             ("Retrieval", "Remove contradictory chunks before generation."),
         ),
-        "required_data": ["input", "actual_output", "contexts"],
+        "required_data": ["input", "actual_output", "retrieval_contexts"],
     },
     "deepeval.contextual_relevancy": {
         "meaning": (
@@ -462,7 +462,7 @@ METRIC_INFO: dict[str, MetricInfo] = {
             ),
             ("Data", "Use curated ground-truth contexts for this metric."),
         ),
-        "required_data": ["input", "actual_output", "contexts"],
+        "required_data": ["input", "actual_output", "context"],
     },
     "deepeval.prompt_alignment": {
         "meaning": (

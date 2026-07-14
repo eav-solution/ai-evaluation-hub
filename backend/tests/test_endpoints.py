@@ -9,12 +9,15 @@ def test_render_template_preserves_whole_value_types():
         input="hello",
         actual_output="",
         expected_output="expected",
+        context=["trusted"],
         retrieval_contexts=["one", "two"],
     )
     rendered = render_template(
         {
             "message": "Question: {{input}}",
             "contexts": "{{contexts}}",
+            "context": "{{context}}",
+            "retrieval_contexts": "{{retrieval_contexts}}",
             "nested": [{"expected": "{{expected_output}}"}],
         },
         row,
@@ -22,6 +25,8 @@ def test_render_template_preserves_whole_value_types():
     assert rendered == {
         "message": "Question: hello",
         "contexts": ["one", "two"],
+        "context": ["trusted"],
+        "retrieval_contexts": ["one", "two"],
         "nested": [{"expected": "expected"}],
     }
 
@@ -38,6 +43,61 @@ def test_extract_answer_requires_match():
 
     with pytest.raises(ValueError, match="matched no values"):
         extract_answer({"answer": "x"}, "$.missing")
+
+
+def test_extract_named_response_fields_and_legacy_alias():
+    from app.endpoints import EndpointConfig, extract_response_fields
+
+    payload = {
+        "answer": "response",
+        "facts": ["trusted fact"],
+        "documents": ["retrieved document"],
+    }
+    config = EndpointConfig(
+        url="https://example.test/chat",
+        response_mappings={
+            "actual_output": "$.answer",
+            "context": "$.facts",
+            "retrieval_contexts": "$.documents",
+        },
+    )
+    assert extract_response_fields(payload, config.model_dump()) == {
+        "actual_output": "response",
+        "context": ["trusted fact"],
+        "retrieval_contexts": ["retrieved document"],
+    }
+
+    legacy = EndpointConfig(
+        url="https://example.test/chat",
+        response_jsonpath="$.answer",
+    )
+    assert extract_response_fields(payload, legacy.model_dump()) == {
+        "actual_output": "response"
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"response_mappings": {"unknown": "$.answer"}}, "response mapping"),
+        (
+            {
+                "response_jsonpath": "$.answer",
+                "response_mappings": {"actual_output": "$.other"},
+            },
+            "conflict",
+        ),
+        ({"response_mappings": {"actual_output": "not["}}, "JSONPath"),
+        ({"response_mappings": {"context": "$.facts"}}, "actual_output"),
+    ],
+)
+def test_endpoint_config_rejects_invalid_named_response_mappings(kwargs, message):
+    from pydantic import ValidationError
+
+    from app.endpoints import EndpointConfig
+
+    with pytest.raises(ValidationError, match=message):
+        EndpointConfig(url="https://example.test/chat", **kwargs)
 
 
 def test_endpoint_client_blocks_private_addresses(monkeypatch):

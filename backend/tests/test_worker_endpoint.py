@@ -48,7 +48,12 @@ def test_endpoint_worker_continues_after_row_failure(db, monkeypatch):
             "method": "POST",
             "headers": {"Authorization": encrypt_secret("Bearer endpoint")},
             "body_template": {"prompt": "{{input}}"},
-            "response_jsonpath": "$.answer",
+            "response_jsonpath": None,
+            "response_mappings": {
+                "actual_output": "$.answer",
+                "context": "$.facts",
+                "retrieval_contexts": "$.documents",
+            },
         },
         judge_config={"provider": "openai", "model": "model"},
         progress_total=2,
@@ -61,15 +66,19 @@ def test_endpoint_worker_continues_after_row_failure(db, monkeypatch):
         "get_object",
         lambda key: b'[{"prompt":"one"},{"prompt":"two"}]',
     )
+    scored_rows = []
+
+    def score(row, judge, config):
+        scored_rows.append(row)
+        return MetricScore("test.score", 0.9, row.actual_output, True)
+
     adapter = CallableAdapter(
         key="test.score",
         framework="test",
         display_name="Score",
         description="Score",
         requires=frozenset(),
-        scorer=lambda row, judge, config: MetricScore(
-            "test.score", 0.9, row.actual_output, True
-        ),
+        scorer=score,
     )
     monkeypatch.setattr(tasks, "METRICS", {"test.score": adapter})
     calls = []
@@ -78,7 +87,15 @@ def test_endpoint_worker_continues_after_row_failure(db, monkeypatch):
         calls.append((row.input, encrypted_headers))
         if row.input == "two":
             raise RuntimeError("endpoint unavailable")
-        return "answer one", {"answer": "answer one"}, 17.4
+        return (
+            "answer one",
+            {
+                "answer": "answer one",
+                "facts": ["trusted fact"],
+                "documents": ["retrieved document"],
+            },
+            17.4,
+        )
 
     monkeypatch.setattr(tasks, "call_endpoint", fake_call)
     tasks.evaluate_run.run(run.id)
@@ -92,6 +109,10 @@ def test_endpoint_worker_continues_after_row_failure(db, monkeypatch):
     assert results[0].actual == "answer one"
     assert results[0].latency_ms == 17
     assert results[0].scores["test.score"]["score"] == 0.9
+    assert results[0].details["sample"]["context"] == ["trusted fact"]
+    assert results[0].contexts == ["retrieved document"]
+    assert scored_rows[0].context == ["trusted fact"]
+    assert scored_rows[0].retrieval_contexts == ["retrieved document"]
     assert results[1].actual is None
     assert results[1].error == "endpoint unavailable"
 

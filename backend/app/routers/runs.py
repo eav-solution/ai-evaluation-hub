@@ -28,6 +28,18 @@ logger = logging.getLogger(__name__)
 EMBEDDING_CONNECTION_TYPES = {"openai", "openai_compatible"}
 
 
+def _available_sample_fields(
+    schema_map: dict[str, str], endpoint_config: EndpointConfig | None
+) -> set[str]:
+    fields = set(schema_map)
+    if "contexts" in fields:
+        fields.update({"context", "retrieval_contexts"})
+    if endpoint_config is not None:
+        response_fields = set(endpoint_config.resolved_response_mappings())
+        fields.update(response_fields)
+    return fields
+
+
 def _confirm_custom_model(connection: ProviderConnection, model: str) -> None:
     """For a custom connection, confirm the model is present in its live /models."""
     if connection.connection_type != "openai_compatible":
@@ -151,6 +163,7 @@ def create_run(
         raise HTTPException(status_code=422, detail="Metrics must be unique")
     selected = []
     resource_roles = set()
+    available_fields = _available_sample_fields(dataset.schema_map, body.endpoint_config)
     for index, item in enumerate(body.metrics):
         adapter = METRICS.get(item.key)
         if adapter is None:
@@ -171,7 +184,7 @@ def create_run(
                     }
                 )
             raise HTTPException(status_code=422, detail=errors) from exc
-        missing = adapter.requirements(config) - dataset.schema_map.keys()
+        missing = adapter.requirements(config) - available_fields
         if missing:
             field = sorted(missing)[0]
             raise HTTPException(

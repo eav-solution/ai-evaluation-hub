@@ -43,6 +43,39 @@ def _one_row_run(db, *, name="One row"):
     return run
 
 
+def test_eval_row_keeps_trusted_and_retrieval_contexts_distinct():
+    from app.tasks import _eval_row
+
+    source = {
+        "prompt": "question",
+        "answer": "answer",
+        "facts": "trusted",
+        "documents": '["retrieved one", "retrieved two"]',
+    }
+    row = _eval_row(
+        source,
+        {
+            "input": "prompt",
+            "actual_output": "answer",
+            "context": "facts",
+            "retrieval_contexts": "documents",
+        },
+    )
+    assert row.context == ["trusted"]
+    assert row.retrieval_contexts == ["retrieved one", "retrieved two"]
+
+    legacy = _eval_row(
+        source,
+        {
+            "input": "prompt",
+            "actual_output": "answer",
+            "contexts": "documents",
+        },
+    )
+    assert legacy.context is None
+    assert legacy.retrieval_contexts == ["retrieved one", "retrieved two"]
+
+
 def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
     from app import storage
     from app.evals.base import CallableAdapter, MetricScore

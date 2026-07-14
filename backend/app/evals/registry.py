@@ -66,7 +66,7 @@ METRICS = {
             "Factual consistency with retrieved contexts.",
             "rag",
             "generation",
-            {"contexts"},
+            {"retrieval_contexts"},
         ),
         _adapter(
             "ragas.answer_relevancy",
@@ -90,7 +90,7 @@ METRICS = {
             "Whether relevant contexts rank above irrelevant contexts.",
             "rag",
             "retrieval",
-            {"contexts", "expected_output"},
+            {"retrieval_contexts", "expected_output"},
         ),
         _adapter(
             "ragas.context_recall",
@@ -98,7 +98,7 @@ METRICS = {
             "How much of the expected answer is supported by contexts.",
             "rag",
             "retrieval",
-            {"contexts", "expected_output"},
+            {"retrieval_contexts", "expected_output"},
         ),
         _adapter(
             "deepeval.answer_relevancy",
@@ -113,7 +113,7 @@ METRICS = {
             "Factual consistency with retrieved contexts.",
             "rag",
             "generation",
-            {"contexts"},
+            {"retrieval_contexts"},
         ),
         _adapter(
             "deepeval.contextual_relevancy",
@@ -129,7 +129,7 @@ METRICS = {
             "Contradictions against known contexts.",
             "general",
             "text_safety",
-            {"contexts"},
+            {"context"},
         ),
         _adapter(
             "deepeval.prompt_alignment",

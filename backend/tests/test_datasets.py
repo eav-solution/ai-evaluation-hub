@@ -78,6 +78,52 @@ def test_dataset_upload_rejects_invalid_format(client, auth_headers, object_stor
     assert response.status_code == 422
 
 
+def test_dataset_schema_map_accepts_canonical_and_legacy_context_fields(
+    client, auth_headers, object_store
+):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    uploaded = client.post(
+        f"/api/workspaces/{workspace_id}/datasets",
+        data={"name": "RAG rows"},
+        files={
+            "file": (
+                "rag.csv",
+                b"question,facts,documents\nWhat?,trusted,retrieved\n",
+                "text/csv",
+            )
+        },
+        headers=auth_headers,
+    ).json()
+    url = f"/api/workspaces/{workspace_id}/datasets/{uploaded['id']}/schema-map"
+
+    canonical = client.patch(
+        url,
+        json={
+            "schema_map": {
+                "input": "question",
+                "context": "facts",
+                "retrieval_contexts": "documents",
+            }
+        },
+        headers=auth_headers,
+    )
+    assert canonical.status_code == 200
+
+    legacy = client.patch(
+        url,
+        json={"schema_map": {"input": "question", "contexts": "documents"}},
+        headers=auth_headers,
+    )
+    assert legacy.status_code == 200
+
+    unknown = client.patch(
+        url,
+        json={"schema_map": {"input": "question", "documents": "documents"}},
+        headers=auth_headers,
+    )
+    assert unknown.status_code == 422
+
+
 def test_nonmember_cannot_access_dataset(client, auth_headers, object_store):
     workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
     token = client.post(

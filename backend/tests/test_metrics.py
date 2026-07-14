@@ -22,7 +22,7 @@ def test_metric_catalog_contains_complete_v1_info(client):
     assert response.status_code == 200
     metrics = {item["key"]: item for item in response.json()}
     assert set(metrics) == set(EXPECTED_DIRECTIONS)
-    assert metrics["ragas.faithfulness"]["requires"] == ["contexts"]
+    assert metrics["ragas.faithfulness"]["requires"] == ["retrieval_contexts"]
 
     for key, expected_direction in EXPECTED_DIRECTIONS.items():
         info = metrics[key]["info"]

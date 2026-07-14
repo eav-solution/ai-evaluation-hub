@@ -16,7 +16,14 @@ from app.models import Dataset, GenerationJob, OutboxEvent, Workspace
 router = APIRouter(
     prefix="/api/workspaces/{workspace_id}/datasets", tags=["datasets"]
 )
-SCHEMA_FIELDS = {"input", "expected_output", "contexts", "actual_output"}
+SCHEMA_FIELDS = {
+    "input",
+    "actual_output",
+    "expected_output",
+    "context",
+    "retrieval_contexts",
+    "contexts",
+}
 
 
 class DatasetOut(BaseModel):

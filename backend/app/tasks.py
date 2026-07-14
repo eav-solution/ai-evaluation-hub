@@ -9,7 +9,7 @@ from app.config import settings
 from app.datasets import parse_dataset
 from app.db import SessionLocal
 from app.documents import text_storage_key
-from app.endpoints import call_endpoint
+from app.endpoints import call_endpoint, extract_response_fields
 from app.evals.base import EvalRow, JudgeConfig
 from app.evals.registry import METRICS
 from app.models import (
@@ -130,7 +130,10 @@ def _eval_row(
         input=str(input_value),
         actual_output=str(actual),
         expected_output=_text(source.get(mapping.get("expected_output"))),
-        retrieval_contexts=_contexts(source.get(mapping.get("contexts"))),
+        context=_contexts(source.get(mapping.get("context"))),
+        retrieval_contexts=_contexts(
+            source.get(mapping.get("retrieval_contexts") or mapping.get("contexts"))
+        ),
     )
 
 
@@ -231,10 +234,13 @@ def _result_complete(result: RunResult, metric_keys: list[str]) -> bool:
 
 
 def _stored_row(result: RunResult) -> EvalRow:
+    details = result.details if isinstance(result.details, dict) else {}
+    sample = details.get("sample") if isinstance(details.get("sample"), dict) else {}
     return EvalRow(
         input=result.input,
         actual_output=result.actual or "",
         expected_output=result.expected,
+        context=_contexts(sample.get("context")),
         retrieval_contexts=result.contexts,
     )
 
@@ -333,6 +339,7 @@ def evaluate_run(run_id: str) -> None:
                             ),
                             contexts=row.contexts,
                             scores={},
+                            details={"sample": {"context": row.context}},
                             error=(
                                 _INTERRUPTED_ENDPOINT
                                 if run.mode == "endpoint"
@@ -349,7 +356,7 @@ def evaluate_run(run_id: str) -> None:
                                     raise ValueError(
                                         "Endpoint configuration is missing"
                                     )
-                                answer, _payload, endpoint_latency = call_endpoint(
+                                answer, payload, endpoint_latency = call_endpoint(
                                     run.endpoint_config,
                                     row,
                                     encrypted_headers=True,
@@ -367,12 +374,26 @@ def evaluate_run(run_id: str) -> None:
                                 result.actual = answer
                                 result.error = None
                                 result.latency_ms = round(endpoint_latency)
+                                response_fields = extract_response_fields(
+                                    payload, run.endpoint_config
+                                )
                                 row = EvalRow(
                                     input=row.input,
-                                    actual_output=answer,
+                                    actual_output=response_fields["actual_output"],
                                     expected_output=row.expected_output,
-                                    retrieval_contexts=row.contexts,
+                                    context=_contexts(
+                                        response_fields.get("context", row.context)
+                                    ),
+                                    retrieval_contexts=_contexts(
+                                        response_fields.get(
+                                            "retrieval_contexts",
+                                            row.retrieval_contexts,
+                                        )
+                                    ),
                                 )
+                                result.actual = row.actual_output
+                                result.contexts = row.retrieval_contexts
+                                result.details = {"sample": {"context": row.context}}
                                 db.commit()
                         else:
                             result.latency_ms = round(

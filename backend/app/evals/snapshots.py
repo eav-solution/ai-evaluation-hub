@@ -64,7 +64,7 @@ def build_definition_snapshot(
         "endpoint": (
             {
                 "method": endpoint_config.method,
-                "response_jsonpath": endpoint_config.response_jsonpath,
+                "response_mappings": endpoint_config.resolved_response_mappings(),
             }
             if endpoint_config is not None
             else None

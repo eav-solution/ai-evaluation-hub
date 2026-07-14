@@ -425,9 +425,67 @@ def test_create_endpoint_run_encrypts_headers(client, auth_headers, db, monkeypa
     snapshot = stored.definition_snapshot
     assert snapshot["endpoint"] == {
         "method": "POST",
-        "response_jsonpath": "$.answer",
+        "response_mappings": {"actual_output": "$.answer"},
     }
     assert "authorization" not in str(snapshot).lower()
+
+
+def test_endpoint_response_mappings_satisfy_metric_requirements(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db, schema_map={"input": "prompt"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Mapped endpoint",
+            "mode": "endpoint",
+            "metrics": [{"key": "deepeval.contextual_relevancy"}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+            "endpoint_config": {
+                "url": "https://example.com/evaluate",
+                "response_mappings": {
+                    "actual_output": "$.answer",
+                    "retrieval_contexts": "$.documents",
+                },
+            },
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 201
+
+
+def test_endpoint_response_mappings_reject_unknown_field(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db, schema_map={"input": "prompt"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Bad endpoint mapping",
+            "mode": "endpoint",
+            "metrics": [{"key": "deepeval.bias"}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+            "endpoint_config": {
+                "url": "https://example.com/evaluate",
+                "response_mappings": {
+                    "actual_output": "$.answer",
+                    "documents": "$.documents",
+                },
+            },
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 422
 
 
 def test_create_endpoint_run_requires_config(client, auth_headers, db, monkeypatch):
