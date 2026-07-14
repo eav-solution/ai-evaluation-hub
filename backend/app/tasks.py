@@ -390,9 +390,22 @@ def evaluate_run(run_id: str) -> None:
                                 result.actual = answer
                                 result.error = None
                                 result.latency_ms = round(endpoint_latency)
-                                response_fields = extract_response_fields(
-                                    payload, run.endpoint_config
-                                )
+                                optional_mappings = {
+                                    key: path
+                                    for key, path in (
+                                        run.endpoint_config.get("response_mappings")
+                                        or {}
+                                    ).items()
+                                    if key != "actual_output"
+                                }
+                                response_fields = {"actual_output": answer}
+                                if optional_mappings:
+                                    response_fields.update(
+                                        extract_response_fields(
+                                            payload,
+                                            {"response_mappings": optional_mappings},
+                                        )
+                                    )
                                 row = EvalRow(
                                     input=row.input,
                                     actual_output=response_fields["actual_output"],
