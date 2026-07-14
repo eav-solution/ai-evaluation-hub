@@ -95,15 +95,104 @@ def test_endpoint_worker_continues_after_row_failure(db, monkeypatch):
     assert results[1].actual is None
     assert results[1].error == "endpoint unavailable"
 
-    def fail_call(config, row, *, encrypted_headers):
-        raise RuntimeError("endpoint unavailable")
-
     stored_run.status = "pending"
     stored_run.finished_at = None
     db.commit()
-    monkeypatch.setattr(tasks, "call_endpoint", fail_call)
     tasks.evaluate_run.run(run.id)
     db.expire_all()
 
+    assert db.get(Run, run.id).status == "completed"
+    assert calls == [("one", True), ("two", True)]
+
+
+def test_endpoint_crash_is_not_replayed_after_recovery(db, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import pytest
+
+    from app import storage, tasks
+    from app.evals.base import CallableAdapter, MetricScore
+    from app.models import Dataset, ProviderConnection, Run, RunResult, User, Workspace
+    from app.security import encrypt_secret
+
+    user = User(email="endpoint-crash@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Endpoint crash", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Prompts",
+        format="json",
+        row_count=1,
+        storage_path=f"datasets/{workspace.id}/prompts.json",
+        schema_map={"input": "prompt"},
+    )
+    db.add(dataset)
+    db.add(
+        ProviderConnection(
+            workspace_id=workspace.id,
+            name="OpenAI",
+            connection_type="openai",
+            encrypted_key=encrypt_secret("sk-test"),
+        )
+    )
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Endpoint crash",
+        mode="endpoint",
+        metric_config={"metrics": [{"key": "test.score", "threshold": 0.5}]},
+        endpoint_config={
+            "url": "https://example.com",
+            "method": "POST",
+            "headers": {},
+            "body_template": {"prompt": "{{input}}"},
+            "response_jsonpath": "$.answer",
+        },
+        judge_config={"provider": "openai", "model": "model"},
+        definition_snapshot={"schema_map": {"input": "prompt"}},
+        progress_total=1,
+    )
+    db.add(run)
+    db.commit()
+    monkeypatch.setattr(storage, "get_object", lambda key: b'[{"prompt":"one"}]')
+    adapter = CallableAdapter(
+        key="test.score",
+        framework="test",
+        display_name="Score",
+        description="Score",
+        requires=frozenset(),
+        scorer=lambda row, judge, config: MetricScore(
+            "test.score", 0.9, "ok", True
+        ),
+    )
+    monkeypatch.setattr(tasks, "METRICS", {"test.score": adapter})
+    calls = []
+
+    def crash(config, row, *, encrypted_headers):
+        calls.append(row.input)
+        raise SystemExit("worker stopped")
+
+    monkeypatch.setattr(tasks, "call_endpoint", crash)
+    with pytest.raises(SystemExit, match="worker stopped"):
+        tasks.evaluate_run.run(run.id)
+
+    db.expire_all()
+    checkpoint = db.query(RunResult).filter_by(run_id=run.id).one()
+    assert "interrupted" in checkpoint.error.lower()
+    stored_run = db.get(Run, run.id)
+    stored_run.heartbeat_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    monkeypatch.setattr(tasks, "dispatch_outbox_event", lambda event_id: True)
+    tasks.recover_stale_evaluation_runs()
+    tasks.evaluate_run.run(run.id)
+
+    db.expire_all()
+    assert calls == ["one"]
     assert db.get(Run, run.id).status == "failed"
-    assert db.get(Run, run.id).error == "All rows failed"
+    assert "interrupted" in (
+        db.query(RunResult).filter_by(run_id=run.id).one().error.lower()
+    )

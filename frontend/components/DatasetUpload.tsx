@@ -20,7 +20,7 @@ export function ColumnMapper({
   onSave: (mapping: Record<string, string>) => void | Promise<void>;
 }) {
   const columns = useMemo(
-    () => Object.keys(dataset.preview?.[0] ?? {}),
+    () => Array.from(new Set((dataset.preview ?? []).flatMap((row) => Object.keys(row)))),
     [dataset.preview],
   );
   const [mapping, setMapping] = useState<Record<string, string>>(dataset.schema_map);

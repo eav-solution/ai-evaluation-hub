@@ -1,19 +1,22 @@
 import type {PropsWithChildren} from "react";
-import {fireEvent, render, screen, waitFor} from "@testing-library/react";
+import {fireEvent, render, screen, waitFor, within} from "@testing-library/react";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
 import {RunReport, metricLabel} from "@/components/RunReport";
 import {api} from "@/lib/api";
-import type {Metric, Run} from "@/lib/types";
+import type {Metric, Run, RunResult} from "@/lib/types";
 
 vi.mock("@/lib/api", () => ({api: vi.fn(), download: vi.fn()}));
 vi.mock("recharts", () => {
   const Box = ({children}: PropsWithChildren) => <div>{children}</div>;
+  const Chart = ({children, data}: PropsWithChildren<{data?: unknown}>) => (
+    <div data-testid="bar-chart" data-points={JSON.stringify(data ?? [])}>{children}</div>
+  );
   const Empty = () => null;
   return {
     ResponsiveContainer: Box,
-    BarChart: Box,
-    RadarChart: Box,
+    BarChart: Chart,
+    RadarChart: Chart,
     Bar: Empty,
     CartesianGrid: Empty,
     PolarAngleAxis: Empty,
@@ -80,12 +83,40 @@ beforeEach(() => {
   });
 });
 
-function mockReportApi(catalog: Promise<Metric[]>) {
+function mockReportApi(
+  catalog: Promise<Metric[]>,
+  nextRun: Run = run,
+  results: RunResult[] = [],
+) {
   mockedApi.mockImplementation((path: string) => {
     if (path === "/api/metrics") return catalog as never;
-    if (path.endsWith("/results")) return Promise.resolve([]) as never;
-    return Promise.resolve(run) as never;
+    if (path.endsWith("/results")) return Promise.resolve(results) as never;
+    return Promise.resolve(nextRun) as never;
   });
+}
+
+const toxicity: Metric = {
+  ...metric,
+  key: "deepeval.toxicity",
+  framework: "deepeval",
+  display_name: "Toxicity",
+  info: {...metric.info, score_direction: "lower_is_better"},
+};
+
+function result(row_index: number, input: string, score: number | null): RunResult {
+  return {
+    id: `result-${row_index}`,
+    row_index,
+    input,
+    expected: null,
+    actual: "answer",
+    contexts: null,
+    scores: {
+      [toxicity.key]: {score, reason: null, passed: score === null ? null : score < 0.5, error: null},
+    },
+    error: null,
+    latency_ms: 10,
+  };
 }
 
 describe("metricLabel", () => {
@@ -108,6 +139,49 @@ describe("RunReport metric information", () => {
     fireEvent.click(await screen.findByRole("button", {name: "About Faithfulness"}));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("Claims must be grounded.")).toBeInTheDocument();
+  });
+
+  it("sorts lower-is-better scores while keeping missing values last", async () => {
+    const toxicityRun: Run = {
+      ...run,
+      metric_config: {metrics: [{key: toxicity.key, threshold: 0.5}]},
+      progress_done: 3,
+      progress_total: 3,
+      summaries: [
+        {metric_key: toxicity.key, mean: 0.1, min: 0.1, max: 0.8, p50: 0.1, pass_rate: 0.5, threshold: 0.5},
+      ],
+    };
+    mockReportApi(Promise.resolve([toxicity]), toxicityRun, [
+      result(0, "missing", null),
+      result(1, "high", 0.8),
+      result(2, "low", 0.1),
+    ]);
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    fireEvent.change(screen.getByLabelText("Sort by"), {target: {value: toxicity.key}});
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(within(rows[0]).getByText("low")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("high")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("missing")).toBeInTheDocument();
+    expect(screen.getByText("Lower is better")).toBeInTheDocument();
+    const comparison = JSON.parse(
+      screen.getAllByTestId("bar-chart")[0].getAttribute("data-points")!,
+    );
+    expect(comparison[0]).toMatchObject({raw_mean: 0.1, comparison_score: 0.9});
+    expect(screen.getAllByText("0.100")).toHaveLength(2);
+  });
+
+  it("shows unknown direction without normalizing historical metrics", async () => {
+    mockReportApi(Promise.resolve([]));
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    expect(screen.getByText("Direction unavailable")).toBeInTheDocument();
+    const comparison = JSON.parse(
+      screen.getAllByTestId("bar-chart")[0].getAttribute("data-points")!,
+    );
+    expect(comparison).toEqual([]);
   });
 
   it("keeps report results usable when the catalog fails", async () => {
