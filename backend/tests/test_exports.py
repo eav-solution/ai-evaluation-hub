@@ -49,7 +49,11 @@ def _completed_run(db):
             }
         },
         latency_ms=42,
-        details={"trace": [{"type": "tool", "name": "search"}], "note": "café"},
+        details={
+            "sample": {"context": ["Trusted <fact>"]},
+            "trace": [{"type": "tool", "name": "search"}],
+            "note": "café",
+        },
         usage={"input_tokens": 12, "output_tokens": 4},
         estimated_cost=0.0012,
     )
@@ -78,6 +82,9 @@ def test_export_serializers_preserve_nested_json_and_flatten_csv(
     payload = build_payload(run, summaries, results)
     assert payload["results"][0]["scores"]["deepeval.bias"]["score"] == 0.8
     assert payload["results"][0]["details"]["note"] == "café"
+    assert payload["results"][0]["details"]["sample"]["context"] == [
+        "Trusted <fact>"
+    ]
     assert payload["results"][0]["usage"] == {
         "input_tokens": 12,
         "output_tokens": 4,
@@ -90,9 +97,9 @@ def test_export_serializers_preserve_nested_json_and_flatten_csv(
     assert rows[0]["deepeval.bias.score"] == "0.8"
     assert rows[0]["deepeval.bias.passed"] == "true"
     assert rows[0]["contexts"] == '["Policy <one>"]'
-    assert rows[0]["details"] == (
-        '{"trace": [{"type": "tool", "name": "search"}], "note": "café"}'
-    )
+    assert '"sample": {"context": ["Trusted <fact>"]}' in rows[0]["details"]
+    assert '"trace": [{"type": "tool", "name": "search"}]' in rows[0]["details"]
+    assert '"note": "café"' in rows[0]["details"]
     assert rows[0]["usage"] == '{"input_tokens": 12, "output_tokens": 4}'
     assert rows[0]["estimated_cost"] == "0.0012"
 
@@ -110,6 +117,13 @@ def test_html_report_is_self_contained_and_escaped(client, auth_headers, db):
     assert "https://" not in html
     assert "&lt;Export &amp; report&gt;" in html
     assert "encrypted-secret" not in html
+    assert "Result metadata" in html
+    assert "Trusted context" in html
+    assert "Trusted &lt;fact&gt;" in html
+    assert "Usage" in html
+    assert "input_tokens" in html
+    assert "Estimated cost" in html
+    assert "$0.001200" in html
 
 
 def test_export_download_routes(client, auth_headers, db):

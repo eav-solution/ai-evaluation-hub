@@ -269,29 +269,83 @@ export function RunReport({
           <table>
             <thead><tr><th>#</th><th>Input / output</th>{metricKeys.map((key) => <th key={key}>{key}</th>)}<th>Latency</th></tr></thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.row_index}</td>
-                  <td className="copy-cell">
-                    <strong>{row.input}</strong>
-                    <p>{row.actual}</p>
-                    {row.error && <span className="error">{row.error}</span>}
-                    {row.contexts && <details><summary>Contexts</summary><pre>{JSON.stringify(row.contexts, null, 2)}</pre></details>}
-                  </td>
-                  {metricKeys.map((key) => {
-                    const score = row.scores[key];
-                    return (
-                      <td key={key}>
-                        <span className={`score ${score?.passed === false ? "bad" : "good"}`}>
-                          {score?.score?.toFixed(3) ?? "—"}
-                        </span>
-                        {(score?.reason || score?.error) && <details><summary>Details</summary><p>{score.reason ?? score.error}</p></details>}
-                      </td>
-                    );
-                  })}
-                  <td>{row.latency_ms === null ? "—" : `${row.latency_ms} ms`}</td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const sample = row.details?.sample;
+                const trustedContext =
+                  sample && typeof sample === "object" && "context" in sample
+                    ? (sample as {context?: unknown}).context
+                    : null;
+                const hasMetadata =
+                  row.details !== null ||
+                  row.usage !== null ||
+                  row.estimated_cost !== null;
+                return (
+                  <tr key={row.id}>
+                    <td>{row.row_index}</td>
+                    <td className="copy-cell">
+                      <strong>{row.input}</strong>
+                      <p>{row.actual}</p>
+                      {row.error && <span className="error">{row.error}</span>}
+                      {row.contexts && (
+                        <details>
+                          <summary>Contexts</summary>
+                          <pre>{JSON.stringify(row.contexts, null, 2)}</pre>
+                        </details>
+                      )}
+                      {hasMetadata && (
+                        <details className="result-metadata">
+                          <summary>Result metadata</summary>
+                          <div className="result-metadata-body">
+                            {trustedContext !== null && trustedContext !== undefined && (
+                              <div>
+                                <strong>Trusted context</strong>
+                                <pre>{JSON.stringify(trustedContext, null, 2)}</pre>
+                              </div>
+                            )}
+                            {row.details !== null && (
+                              <div>
+                                <strong>Details</strong>
+                                <pre>{JSON.stringify(row.details, null, 2)}</pre>
+                              </div>
+                            )}
+                            {row.usage !== null && (
+                              <div>
+                                <strong>Usage</strong>
+                                <pre>{JSON.stringify(row.usage, null, 2)}</pre>
+                              </div>
+                            )}
+                            {row.estimated_cost !== null && (
+                              <div>
+                                <strong>Estimated cost</strong>
+                                <p>${row.estimated_cost.toFixed(6)}</p>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                    </td>
+                    {metricKeys.map((key) => {
+                      const score = row.scores[key];
+                      return (
+                        <td key={key}>
+                          <span
+                            className={`score ${score?.passed === false ? "bad" : "good"}`}
+                          >
+                            {score?.score?.toFixed(3) ?? "—"}
+                          </span>
+                          {(score?.reason || score?.error) && (
+                            <details>
+                              <summary>Details</summary>
+                              <p>{score.reason ?? score.error}</p>
+                            </details>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td>{row.latency_ms === null ? "—" : `${row.latency_ms} ms`}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

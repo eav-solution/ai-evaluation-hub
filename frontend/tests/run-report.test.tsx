@@ -214,4 +214,37 @@ describe("RunReport metric information", () => {
     await waitFor(() => expect(mockedApi).toHaveBeenCalledWith("/api/metrics"));
     expect(screen.queryByRole("button", {name: "About Faithfulness"})).not.toBeInTheDocument();
   });
+
+  it("shows trusted context, details, usage, and cost in a row drill-down", async () => {
+    const enriched: RunResult = {
+      id: "result-enriched",
+      row_index: 0,
+      input: "question",
+      expected: null,
+      actual: "answer",
+      contexts: ["retrieved document"],
+      scores: {
+        [metric.key]: {score: 0.8, reason: "Grounded", passed: true, error: null},
+      },
+      error: null,
+      latency_ms: 12,
+      details: {sample: {context: ["trusted fact"]}, provider: {request_id: "req-1"}},
+      usage: {input_tokens: 12, output_tokens: 4},
+      estimated_cost: 0.0012,
+    };
+    mockReportApi(Promise.resolve([metric]), run, [enriched]);
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    const summary = screen.getByText("Result metadata");
+    fireEvent.click(summary);
+    const drilldown = summary.closest("details");
+    expect(drilldown).not.toBeNull();
+    expect(within(drilldown as HTMLElement).getByText("Trusted context")).toBeInTheDocument();
+    expect(within(drilldown as HTMLElement).getAllByText(/trusted fact/)).toHaveLength(2);
+    expect(within(drilldown as HTMLElement).getByText("Details")).toBeInTheDocument();
+    expect(within(drilldown as HTMLElement).getByText("Usage")).toBeInTheDocument();
+    expect(within(drilldown as HTMLElement).getByText("Estimated cost")).toBeInTheDocument();
+    expect(within(drilldown as HTMLElement).getByText("$0.001200")).toBeInTheDocument();
+  });
 });

@@ -271,6 +271,11 @@ progress::-moz-progress-bar { background: var(--primary); }
 details { max-width: 300px; margin-top: 7px; color: var(--muted); }
 details summary { cursor: pointer; font-weight: 650; }
 pre { word-break: break-word; white-space: pre-wrap; font-size: 12px; }
+.result-metadata { max-width: 440px; }
+.result-metadata-body { display: grid; gap: 9px; margin-top: 8px; }
+.result-metadata-body > div { border-left: 2px solid var(--line); padding-left: 8px; }
+.result-metadata-body strong { color: var(--ink); font-size: 11px; }
+.result-metadata-body p, .result-metadata-body pre { margin: 4px 0 0; }
 
 /* Model benchmarks */
 .model-benchmark-catalog { display: grid; gap: 16px; }

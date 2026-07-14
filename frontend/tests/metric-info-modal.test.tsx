@@ -96,6 +96,20 @@ describe("MetricInfoModal", () => {
     opener.remove();
   });
 
+  it("uses category-neutral improvement copy for General metrics", () => {
+    render(
+      <MetricInfoModal
+        metric={{...metric, category: "general"}}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", {name: "How to improve"})).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {name: "How to improve your RAG"}),
+    ).not.toBeInTheDocument();
+  });
+
   it("closes on cancel and backdrop click", () => {
     const onClose = vi.fn();
     const first = render(<MetricInfoModal metric={metric} onClose={onClose} />);

@@ -133,7 +133,7 @@ export function MetricInfoModal({
               </div>
             </section>
             <section className="metric-info-section">
-              <h3>How to improve your RAG</h3>
+              <h3>{metric.category === "rag" ? "How to improve your RAG" : "How to improve"}</h3>
               <ul className="metric-info-tips">
                 {metric.info.improvement_tips.map((tip) => (
                   <li key={`${tip.area}:${tip.text}`}><strong>{tip.area}</strong><span>{tip.text}</span></li>

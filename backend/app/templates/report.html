@@ -84,6 +84,27 @@
           <td>
             {{ row.actual or "" }}
             {% if row.contexts %}<details><summary>Contexts</summary><pre>{{ row.contexts|tojson(indent=2) }}</pre></details>{% endif %}
+            {% set sample = row.details.get("sample", {}) if row.details else {} %}
+            {% set trusted_context = sample.get("context") if sample else none %}
+            {% if row.details is not none or row.usage is not none or row.estimated_cost is not none %}
+            <details>
+              <summary>Result metadata</summary>
+              {% if trusted_context is not none %}
+              <strong>Trusted context</strong>
+              <pre>{% for item in trusted_context %}{{ item }}{% if not loop.last %}
+{% endif %}{% endfor %}</pre>
+              {% endif %}
+              {% if row.details is not none %}
+              <strong>Details</strong><pre>{{ row.details|tojson(indent=2) }}</pre>
+              {% endif %}
+              {% if row.usage is not none %}
+              <strong>Usage</strong><pre>{{ row.usage|tojson(indent=2) }}</pre>
+              {% endif %}
+              {% if row.estimated_cost is not none %}
+              <strong>Estimated cost</strong><pre>${{ "%.6f"|format(row.estimated_cost) }}</pre>
+              {% endif %}
+            </details>
+            {% endif %}
           </td>
           {% for key in metric_keys %}
           {% set metric = row.scores.get(key, {}) %}
