@@ -64,6 +64,15 @@ export type Metric = {
   info: MetricInfo;
 };
 
+export type MetricPreset = {
+  id: string;
+  display_name: string;
+  description: string;
+  category: "rag" | "agentic" | "general";
+  mode_hint: "static" | "endpoint";
+  metric_keys: string[];
+};
+
 export type Summary = {
   metric_key: string;
   mean: number;

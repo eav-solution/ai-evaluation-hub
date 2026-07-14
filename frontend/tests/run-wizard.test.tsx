@@ -1,7 +1,7 @@
 import {readFileSync} from "node:fs";
 import {resolve} from "node:path";
 
-import {fireEvent, render, screen, waitFor} from "@testing-library/react";
+import {fireEvent, render, screen, waitFor, within} from "@testing-library/react";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
 import {RunWizard} from "@/components/RunWizard";
@@ -85,6 +85,44 @@ const answerRelevancy: Metric = {
   default_config: {threshold: null},
 };
 
+const deepAnswerRelevancy: Metric = {
+  ...answerRelevancy,
+  key: "deepeval.answer_relevancy",
+  framework: "deepeval",
+  resources: ["judge"],
+  default_config: {threshold: 0.5, include_reason: true, strict_mode: false},
+};
+
+const faithfulness: Metric = {
+  ...deepAnswerRelevancy,
+  key: "deepeval.faithfulness",
+  display_name: "Faithfulness",
+  description: "Grounded in retrieved evidence",
+  requires: ["retrieval_contexts"],
+};
+
+const contextualRelevancy: Metric = {
+  ...deepAnswerRelevancy,
+  key: "deepeval.contextual_relevancy",
+  family: "retrieval",
+  display_name: "Contextual Relevancy",
+  description: "Relevant retrieved evidence",
+  requires: ["retrieval_contexts"],
+};
+
+const ragLivePreset = {
+  id: "rag_live",
+  display_name: "RAG live",
+  description: "Core live checks",
+  category: "rag" as const,
+  mode_hint: "endpoint" as const,
+  metric_keys: [
+    deepAnswerRelevancy.key,
+    faithfulness.key,
+    contextualRelevancy.key,
+  ],
+};
+
 beforeEach(() => {
   mockedApi.mockReset();
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -104,6 +142,7 @@ beforeEach(() => {
     if (path.includes("/models")) {
       return Promise.resolve({models: ["chat-a", "chat-b", "embed-x"]}) as never;
     }
+    if (path === "/api/metrics/presets") return Promise.resolve([]) as never;
     return Promise.resolve({id: "run-1"}) as never;
   });
 });
@@ -202,8 +241,161 @@ describe("RunWizard", () => {
     );
 
     expect(screen.getByLabelText("Faithfulness")).toBeDisabled();
-    expect(screen.getByLabelText("Bias")).toBeEnabled();
     expect(screen.getByText("Needs mapping: contexts")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "General"}));
+    expect(screen.getByLabelText("Bias")).toBeEnabled();
+  });
+
+  it("organizes cards by capability, family, then framework and preserves selection", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[
+          deepAnswerRelevancy,
+          {...answerRelevancy, resources: ["judge"]},
+          contextualRelevancy,
+          biasMetric,
+        ]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    expect(screen.getByRole("button", {name: "RAG"})).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", {name: "Agentic"})).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "General"})).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Generation"})).toBeInTheDocument();
+    expect(screen.getByRole("button", {name: "Retrieval"})).toBeInTheDocument();
+    expect(screen.getAllByRole("group", {name: "deepeval"})).toHaveLength(2);
+    expect(screen.getByRole("group", {name: "ragas"})).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("deepeval.answer_relevancy"));
+    fireEvent.click(screen.getByRole("button", {name: "Retrieval"}));
+    expect(screen.queryByLabelText("deepeval.answer_relevancy")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Contextual Relevancy")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", {name: "All families"}));
+    expect(screen.getByLabelText("deepeval.answer_relevancy")).toBeChecked();
+
+    fireEvent.change(screen.getByLabelText("Search metrics"), {
+      target: {value: "retrieved evidence"},
+    });
+    expect(screen.getByLabelText("Contextual Relevancy")).toBeInTheDocument();
+    expect(screen.queryByLabelText("deepeval.answer_relevancy")).not.toBeInTheDocument();
+  });
+
+  it("enables the RAG live preset after an endpoint retrieval mapping is configured", async () => {
+    mockedApi.mockImplementation((path: string) => {
+      if (path === "/api/metrics/presets") return Promise.resolve([ragLivePreset]) as never;
+      return Promise.resolve({id: "run-1"}) as never;
+    });
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[{...dataset, schema_map: {input: "prompt"}}]}
+        initialMetrics={[deepAnswerRelevancy, faithfulness, contextualRelevancy]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    const preset = await screen.findByRole("button", {name: "RAG live"});
+    expect(preset).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Live endpoint"));
+    fireEvent.change(screen.getByLabelText("Retrieval contexts JSONPath"), {
+      target: {value: "$.documents"},
+    });
+    expect(preset).toBeEnabled();
+    fireEvent.click(preset);
+
+    const picker = screen.getByTestId("metric-picker");
+    expect(within(picker).getByLabelText("Answer Relevancy")).toBeChecked();
+    expect(within(picker).getByLabelText("Faithfulness")).toBeChecked();
+    expect(within(picker).getByLabelText("Contextual Relevancy")).toBeChecked();
+    expect(within(picker).getAllByRole("checkbox", {checked: true})).toHaveLength(3);
+  });
+
+  it("submits generated metric config and named endpoint response mappings", async () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[{...dataset, schema_map: {input: "prompt"}}]}
+        initialMetrics={[biasMetric]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Bias"));
+    fireEvent.click(screen.getByLabelText("Live endpoint"));
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: {value: "https://example.test/chat"},
+    });
+    fireEvent.change(screen.getByLabelText("Actual output JSONPath"), {
+      target: {value: "$.answer"},
+    });
+    fireEvent.change(screen.getByLabelText("Trusted context JSONPath"), {
+      target: {value: "$.facts"},
+    });
+    fireEvent.change(screen.getByLabelText("Retrieval contexts JSONPath"), {
+      target: {value: "$.documents"},
+    });
+    fireEvent.click(screen.getByLabelText("LLM Model"));
+    fireEvent.click(screen.getByRole("option", {name: "gpt-4.1-mini"}));
+    fireEvent.click(screen.getByRole("button", {name: "Launch evaluation"}));
+
+    await waitFor(() => {
+      const launchCall = mockedApi.mock.calls.find(
+        ([path, init]) => path === "/api/workspaces/workspace-1/runs" && init,
+      );
+      expect(launchCall).toBeDefined();
+      const payload = JSON.parse(String(launchCall?.[1]?.body));
+      expect(payload.metrics).toEqual([{key: "deepeval.bias", config: {threshold: 0.5}}]);
+      expect(payload.endpoint_config.response_mappings).toEqual({
+        actual_output: "$.answer",
+        context: "$.facts",
+        retrieval_contexts: "$.documents",
+      });
+      expect(payload.endpoint_config).not.toHaveProperty("response_jsonpath");
+    });
+  });
+
+  it("prevents launch while an Advanced JSON config is invalid", () => {
+    const jsonMetric: Metric = {
+      ...biasMetric,
+      key: "deepeval.json_correctness",
+      display_name: "JSON Correctness",
+      config_schema: {
+        type: "object",
+        properties: {
+          threshold: {type: "number", title: "Threshold"},
+          expected_schema: {type: "object", title: "Expected schema"},
+        },
+      },
+      default_config: {
+        threshold: 0.5,
+        expected_schema: {type: "object", properties: {}},
+      },
+    };
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[jsonMetric]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("JSON Correctness"));
+    fireEvent.click(screen.getByLabelText("LLM Model"));
+    fireEvent.click(screen.getByRole("option", {name: "gpt-4.1-mini"}));
+    const launch = screen.getByRole("button", {name: "Launch evaluation"});
+    expect(launch).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("Expected schema Advanced JSON"), {
+      target: {value: "{"},
+    });
+    expect(launch).toBeDisabled();
   });
 
   it("offers curated model options for a native connection", () => {
@@ -238,9 +430,11 @@ describe("RunWizard", () => {
 
   it("enables the native picker after leaving a loading custom connection", async () => {
     const pendingModels = new Promise<{models: string[]}>(() => {});
-    mockedApi.mockImplementation((path: string) =>
-      path.includes("/models") ? pendingModels as never : Promise.resolve({id: "run-1"}) as never,
-    );
+    mockedApi.mockImplementation((path: string) => {
+      if (path.includes("/models")) return pendingModels as never;
+      if (path === "/api/metrics/presets") return Promise.resolve([]) as never;
+      return Promise.resolve({id: "run-1"}) as never;
+    });
     render(
       <RunWizard
         workspaceId="workspace-1"

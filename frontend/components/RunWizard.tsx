@@ -5,13 +5,32 @@ import {FormEvent, useEffect, useMemo, useState} from "react";
 
 import {api} from "@/lib/api";
 import {modelOptions} from "@/lib/model-options";
+import {MetricConfigForm} from "@/components/MetricConfigForm";
 import {MetricInfoButton, MetricInfoModal} from "@/components/MetricInfoModal";
 import {SearchableSelect} from "@/components/SearchableSelect";
-import type {Dataset, Metric, ProviderConnection, Run} from "@/lib/types";
+import type {Dataset, Metric, MetricPreset, ProviderConnection, Run} from "@/lib/types";
 
-export function missingRequirements(metric: Metric, dataset?: Dataset) {
+export function missingRequirements(
+  metric: Metric,
+  dataset?: Dataset,
+  responseMappings: Record<string, string> = {},
+) {
   if (!dataset) return metric.requires;
-  return metric.requires.filter((field) => !dataset.schema_map[field]);
+  const fields = new Set(Object.keys(dataset.schema_map));
+  if (fields.has("contexts")) {
+    fields.add("context");
+    fields.add("retrieval_contexts");
+  }
+  Object.entries(responseMappings).forEach(([field, path]) => {
+    if (path.trim()) fields.add(field);
+  });
+  return metric.requires.filter((field) => !fields.has(field));
+}
+
+const categoryLabels = {rag: "RAG", agentic: "Agentic", general: "General"};
+
+function title(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export function RunWizard({
@@ -30,7 +49,17 @@ export function RunWizard({
   const [metrics, setMetrics] = useState(initialMetrics ?? []);
   const [datasetId, setDatasetId] = useState(initialDatasets?.[0]?.id ?? "");
   const [selected, setSelected] = useState<string[]>([]);
+  const [metricConfigs, setMetricConfigs] = useState<Record<string, Record<string, unknown>>>({});
+  const [configValidity, setConfigValidity] = useState<Record<string, boolean>>({});
   const [activeMetric, setActiveMetric] = useState<Metric | null>(null);
+  const [presets, setPresets] = useState<MetricPreset[]>([]);
+  const [activeCategory, setActiveCategory] = useState<Metric["category"]>(
+    initialMetrics?.some((metric) => metric.category === "rag")
+      ? "rag"
+      : initialMetrics?.[0]?.category ?? "rag",
+  );
+  const [activeFamily, setActiveFamily] = useState("all");
+  const [metricSearch, setMetricSearch] = useState("");
   const [mode, setMode] = useState<"static" | "endpoint">("static");
   const [name, setName] = useState("Evaluation run");
   const [connections, setConnections] = useState<ProviderConnection[]>(initialConnections ?? []);
@@ -49,7 +78,9 @@ export function RunWizard({
   const [method, setMethod] = useState("POST");
   const [headers, setHeaders] = useState("{}");
   const [bodyTemplate, setBodyTemplate] = useState('{"input":"{{input}}"}');
-  const [jsonpath, setJsonpath] = useState("$.answer");
+  const [actualOutputJsonpath, setActualOutputJsonpath] = useState("$.answer");
+  const [contextJsonpath, setContextJsonpath] = useState("");
+  const [retrievalContextsJsonpath, setRetrievalContextsJsonpath] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -63,6 +94,9 @@ export function RunWizard({
     if (!initialMetrics) {
       api<Metric[]>("/api/metrics").then(setMetrics).catch((reason) => setError(String(reason)));
     }
+    api<MetricPreset[]>("/api/metrics/presets")
+      .then((rows) => setPresets(Array.isArray(rows) ? rows : []))
+      .catch((reason) => setError(String(reason)));
     if (!initialConnections) {
       api<ProviderConnection[]>(`/api/workspaces/${workspaceId}/provider-connections`)
         .then((rows) => {
@@ -144,11 +178,101 @@ export function RunWizard({
     };
   }, [embeddingConnection?.id, embeddingConnection?.connection_type, workspaceId]);
 
-  const groups = useMemo(
-    () => Object.groupBy(metrics, (metric) => metric.framework),
-    [metrics],
+  const endpointResponseMappings = useMemo(
+    () => ({
+      actual_output: actualOutputJsonpath,
+      context: contextJsonpath,
+      retrieval_contexts: retrievalContextsJsonpath,
+    }),
+    [actualOutputJsonpath, contextJsonpath, retrievalContextsJsonpath],
   );
+  const activeResponseMappings = mode === "endpoint" ? endpointResponseMappings : {};
+  const families = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          metrics
+            .filter((metric) => metric.category === activeCategory)
+            .map((metric) => metric.family),
+        ),
+      ),
+    [activeCategory, metrics],
+  );
+  const visibleMetrics = useMemo(() => {
+    const query = metricSearch.trim().toLowerCase();
+    return metrics.filter(
+      (metric) =>
+        metric.category === activeCategory &&
+        (activeFamily === "all" || metric.family === activeFamily) &&
+        (!query ||
+          metric.display_name.toLowerCase().includes(query) ||
+          metric.key.toLowerCase().includes(query) ||
+          metric.description.toLowerCase().includes(query)),
+    );
+  }, [activeCategory, activeFamily, metricSearch, metrics]);
+  const familyGroups = useMemo(
+    () => Object.groupBy(visibleMetrics, (metric) => metric.family),
+    [visibleMetrics],
+  );
+  const duplicateDisplayNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    metrics.forEach((metric) =>
+      counts.set(metric.display_name, (counts.get(metric.display_name) ?? 0) + 1),
+    );
+    return new Set(
+      Array.from(counts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name),
+    );
+  }, [metrics]);
   const staticReady = mode === "endpoint" || Boolean(dataset?.schema_map.actual_output);
+  const selectedHaveMissingRequirements = selected.some((key) => {
+    const metric = metrics.find((item) => item.key === key);
+    return !metric || missingRequirements(metric, dataset, activeResponseMappings).length > 0;
+  });
+  const selectedConfigInvalid = selected.some((key) => configValidity[key] === false);
+
+  function toggleMetric(metric: Metric, checked: boolean) {
+    setSelected((current) =>
+      checked ? [...current, metric.key] : current.filter((key) => key !== metric.key),
+    );
+    if (checked) {
+      setMetricConfigs((current) =>
+        current[metric.key]
+          ? current
+          : {...current, [metric.key]: {...metric.default_config}},
+      );
+      setConfigValidity((current) => ({...current, [metric.key]: true}));
+    }
+  }
+
+  function presetIsDisabled(preset: MetricPreset) {
+    const presetMetrics = preset.metric_keys
+      .map((key) => metrics.find((metric) => metric.key === key))
+      .filter((metric): metric is Metric => Boolean(metric));
+    return (
+      presetMetrics.length !== preset.metric_keys.length ||
+      presetMetrics.some(
+        (metric) =>
+          missingRequirements(metric, dataset, activeResponseMappings).length > 0,
+      )
+    );
+  }
+
+  function applyPreset(preset: MetricPreset) {
+    const nextConfigs: Record<string, Record<string, unknown>> = {};
+    const nextValidity: Record<string, boolean> = {};
+    preset.metric_keys.forEach((key) => {
+      const metric = metrics.find((item) => item.key === key);
+      if (metric) {
+        nextConfigs[key] = {...metric.default_config};
+        nextValidity[key] = true;
+      }
+    });
+    setSelected([...preset.metric_keys]);
+    setMetricConfigs(nextConfigs);
+    setConfigValidity(nextValidity);
+  }
 
   async function launch(event: FormEvent) {
     event.preventDefault();
@@ -161,7 +285,9 @@ export function RunWizard({
             method,
             headers: JSON.parse(headers),
             body_template: JSON.parse(bodyTemplate),
-            response_jsonpath: jsonpath,
+            response_mappings: Object.fromEntries(
+              Object.entries(endpointResponseMappings).filter(([, path]) => path.trim()),
+            ),
           }
         : undefined;
       const run = await api<Run>(`/api/workspaces/${workspaceId}/runs`, {
@@ -170,7 +296,7 @@ export function RunWizard({
           dataset_id: datasetId,
           name,
           mode,
-          metrics: selected.map((key) => ({key, threshold: 0.5})),
+          metrics: selected.map((key) => ({key, config: metricConfigs[key] ?? {}})),
           judge: {
             connection_id: connectionId,
             model,
@@ -205,38 +331,160 @@ export function RunWizard({
 
       <section className="panel">
         <p className="step">02 · Metrics</p>
-        {Object.entries(groups).map(([framework, items]) => (
-          <fieldset key={framework}>
-            <legend>{framework}</legend>
-            <div className="metric-grid">
-              {items?.map((metric) => {
-                const missing = missingRequirements(metric, dataset);
-                return (
-                  <div className={`metric-card ${missing.length ? "disabled" : ""}`} key={metric.key}>
-                    <label className="metric-choice">
-                      <input
-                        type="checkbox"
-                        aria-label={metric.display_name}
-                        disabled={Boolean(missing.length)}
-                        checked={selected.includes(metric.key)}
-                        onChange={(event) =>
-                          setSelected((current) =>
-                            event.target.checked
-                              ? [...current, metric.key]
-                              : current.filter((key) => key !== metric.key),
-                          )
-                        }
-                      />
-                      <span><strong>{metric.display_name}</strong><small>{metric.description}</small></span>
-                      {missing.length > 0 && <em>Needs mapping: {missing.join(", ")}</em>}
-                    </label>
-                    <MetricInfoButton metric={metric} onOpen={setActiveMetric} />
-                  </div>
-                );
-              })}
+        <div className="metric-picker" data-testid="metric-picker">
+          <div className="metric-category-tabs" role="tablist" aria-label="Metric capability">
+            {(Object.keys(categoryLabels) as Metric["category"][]).map((category) => (
+              <button
+                key={category}
+                type="button"
+                aria-pressed={activeCategory === category}
+                onClick={() => {
+                  setActiveCategory(category);
+                  setActiveFamily("all");
+                }}
+              >
+                {categoryLabels[category]}
+              </button>
+            ))}
+          </div>
+
+          {presets.some((preset) => preset.category === activeCategory) && (
+            <div className="metric-presets">
+              <span>Recommended</span>
+              {presets
+                .filter((preset) => preset.category === activeCategory)
+                .map((preset) => (
+                  <button
+                    type="button"
+                    key={preset.id}
+                    title={preset.description}
+                    disabled={presetIsDisabled(preset)}
+                    onClick={() => applyPreset(preset)}
+                  >
+                    {preset.display_name}
+                  </button>
+                ))}
             </div>
-          </fieldset>
-        ))}
+          )}
+
+          <div className="metric-picker-controls">
+            <label>
+              Search metrics
+              <input
+                type="search"
+                value={metricSearch}
+                onChange={(event) => setMetricSearch(event.target.value)}
+              />
+            </label>
+            <div className="metric-family-filters" aria-label="Metric families">
+              <button
+                type="button"
+                aria-pressed={activeFamily === "all"}
+                onClick={() => setActiveFamily("all")}
+              >
+                All families
+              </button>
+              {families.map((family) => (
+                <button
+                  type="button"
+                  key={family}
+                  aria-pressed={activeFamily === family}
+                  onClick={() => setActiveFamily(family)}
+                >
+                  {title(family)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {Object.entries(familyGroups).map(([family, familyMetrics]) => (
+            <div className="metric-family" key={family}>
+              <h3>{title(family)}</h3>
+              {Object.entries(
+                Object.groupBy(familyMetrics ?? [], (metric) => metric.framework),
+              ).map(([framework, frameworkMetrics]) => (
+                <fieldset key={framework}>
+                  <legend>{framework}</legend>
+                  <div className="metric-grid">
+                    {frameworkMetrics?.map((metric) => {
+                      const missing = missingRequirements(
+                        metric,
+                        dataset,
+                        activeResponseMappings,
+                      );
+                      return (
+                        <div
+                          className={`metric-card ${missing.length ? "disabled" : ""}`}
+                          key={metric.key}
+                        >
+                          <label className="metric-choice">
+                            <input
+                              type="checkbox"
+                              aria-label={
+                                duplicateDisplayNames.has(metric.display_name)
+                                  ? metric.key
+                                  : metric.display_name
+                              }
+                              disabled={Boolean(missing.length)}
+                              checked={selected.includes(metric.key)}
+                              onChange={(event) =>
+                                toggleMetric(metric, event.target.checked)
+                              }
+                            />
+                            <span>
+                              <strong>{metric.display_name}</strong>
+                              <small>{metric.description}</small>
+                            </span>
+                            {missing.length > 0 && (
+                              <em>Needs mapping: {missing.join(", ")}</em>
+                            )}
+                          </label>
+                          <MetricInfoButton metric={metric} onOpen={setActiveMetric} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+          ))}
+          {!visibleMetrics.length && (
+            <p className="metric-picker-empty">
+              {activeCategory === "agentic"
+                ? "Agentic metrics arrive in the next phase."
+                : "No metrics match these filters."}
+            </p>
+          )}
+        </div>
+
+        {selected.length > 0 && (
+          <div className="metric-configurations">
+            <h3>Metric configuration</h3>
+            {selected.map((key) => {
+              const metric = metrics.find((item) => item.key === key);
+              if (!metric) return null;
+              return (
+                <div className="metric-config-card" key={key}>
+                  <h4>
+                    {metric.display_name} <small>{metric.framework}</small>
+                  </h4>
+                  <MetricConfigForm
+                    metric={metric}
+                    value={metricConfigs[key] ?? metric.default_config}
+                    onChange={(config) =>
+                      setMetricConfigs((current) => ({...current, [key]: config}))
+                    }
+                    onValidityChange={(valid) =>
+                      setConfigValidity((current) =>
+                        current[key] === valid ? current : {...current, [key]: valid},
+                      )
+                    }
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section className="panel">
@@ -252,7 +500,30 @@ export function RunWizard({
             <label>Method<select value={method} onChange={(event) => setMethod(event.target.value)}><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option></select></label>
             <label className="wide">Headers (JSON)<textarea value={headers} onChange={(event) => setHeaders(event.target.value)} /></label>
             <label className="wide">Request body (JSON)<textarea value={bodyTemplate} onChange={(event) => setBodyTemplate(event.target.value)} /></label>
-            <label className="wide">Response JSONPath<input value={jsonpath} onChange={(event) => setJsonpath(event.target.value)} required /></label>
+            <label>
+              Actual output JSONPath
+              <input
+                value={actualOutputJsonpath}
+                onChange={(event) => setActualOutputJsonpath(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Trusted context JSONPath
+              <input
+                value={contextJsonpath}
+                onChange={(event) => setContextJsonpath(event.target.value)}
+                placeholder="Optional"
+              />
+            </label>
+            <label className="wide">
+              Retrieval contexts JSONPath
+              <input
+                value={retrievalContextsJsonpath}
+                onChange={(event) => setRetrievalContextsJsonpath(event.target.value)}
+                placeholder="Optional"
+              />
+            </label>
           </div>
         )}
       </section>
@@ -329,6 +600,8 @@ export function RunWizard({
             !datasetId ||
             !selected.length ||
             !staticReady ||
+            selectedHaveMissingRequirements ||
+            selectedConfigInvalid ||
             !connectionId ||
             !model ||
             (isCustom && Boolean(modelsError)) ||
