@@ -143,6 +143,16 @@ def _run_schema_map(run: Run, dataset: Dataset) -> dict[str, str]:
     )
 
 
+def _run_dataset_source(run: Run, dataset: Dataset) -> tuple[str, str]:
+    snapshot = (run.definition_snapshot or {}).get("dataset")
+    if isinstance(snapshot, dict):
+        storage_path = snapshot.get("storage_path")
+        dataset_format = snapshot.get("format")
+        if isinstance(storage_path, str) and isinstance(dataset_format, str):
+            return storage_path, dataset_format
+    return dataset.storage_path, dataset.format
+
+
 def _summarize(db, run: Run, results: list[RunResult]) -> None:
     for config in run.metric_config["metrics"]:
         values = [
@@ -261,9 +271,10 @@ def evaluate_run(run_id: str) -> None:
             embedding_base_url=embedding_runtime.base_url,
             embedding_api_key=embedding_runtime.api_key,
         )
+        storage_path, dataset_format = _run_dataset_source(run, dataset)
         source_rows = parse_dataset(
-            storage.get_object(dataset.storage_path),
-            dataset.format,
+            storage.get_object(storage_path),
+            dataset_format,
             settings.max_dataset_rows,
         )
         metric_configs = run.metric_config["metrics"]
@@ -274,8 +285,7 @@ def evaluate_run(run_id: str) -> None:
         }
         run.progress_total = len(source_rows)
         run.progress_done = sum(
-            _result_complete(result, metric_keys)
-            for result in stored_results.values()
+            _result_complete(result, metric_keys) for result in stored_results.values()
         )
         run.heartbeat_at = datetime.now(timezone.utc)
         db.commit()
@@ -318,7 +328,9 @@ def evaluate_run(run_id: str) -> None:
                             row_index=index,
                             input=row.input,
                             expected=row.expected_output,
-                            actual=(None if run.mode == "endpoint" else row.actual_output),
+                            actual=(
+                                None if run.mode == "endpoint" else row.actual_output
+                            ),
                             contexts=row.contexts,
                             scores={},
                             error=(
@@ -334,7 +346,9 @@ def evaluate_run(run_id: str) -> None:
                         if run.mode == "endpoint":
                             try:
                                 if run.endpoint_config is None:
-                                    raise ValueError("Endpoint configuration is missing")
+                                    raise ValueError(
+                                        "Endpoint configuration is missing"
+                                    )
                                 answer, _payload, endpoint_latency = call_endpoint(
                                     run.endpoint_config,
                                     row,

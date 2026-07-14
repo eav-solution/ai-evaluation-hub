@@ -114,11 +114,151 @@ def test_create_run_validates_and_enqueues(client, auth_headers, db, monkeypatch
     assert response.status_code == 201
     assert response.json()["status"] == "pending"
     stored = db.get(Run, response.json()["id"])
-    assert stored.definition_snapshot == {"schema_map": dataset.schema_map}
+    assert stored.definition_snapshot["schema_map"] == dataset.schema_map
+    assert stored.definition_snapshot["dataset"] == {
+        "storage_path": dataset.storage_path,
+        "format": dataset.format,
+    }
     event = db.query(OutboxEvent).filter_by(kind="evaluate_run").one()
     assert event.dedupe_key == f"evaluation:{stored.id}"
     assert event.payload == {"run_id": stored.id}
     assert queued == [event.id]
+
+
+def test_create_run_normalizes_nested_metric_config_and_snapshot(
+    client, auth_headers, db, monkeypatch
+):
+    from app.models import Run
+
+    workspace, dataset, connection = _ready_dataset(db)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Configured G-Eval",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.geval", "config": {"rubric": "Be concise"}}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    stored = db.get(Run, response.json()["id"])
+    assert stored.metric_config["metrics"] == [
+        {
+            "key": "deepeval.geval",
+            "threshold": 0.5,
+            "rubric": "Be concise",
+        }
+    ]
+    assert stored.definition_snapshot["libraries"] == {
+        "ragas": "0.4.3",
+        "deepeval": "4.1.0",
+    }
+    assert stored.definition_snapshot["metrics"] == [
+        {
+            "key": "deepeval.geval",
+            "revision": "1",
+            "config": {
+                "threshold": 0.5,
+                "rubric": "Be concise",
+            },
+        }
+    ]
+    assert stored.definition_snapshot["sample"] == {
+        "kind": "single_turn",
+        "normalizer_revision": "1",
+    }
+    assert stored.definition_snapshot["resources"]["judge"] == {
+        "connection_id": connection.id,
+        "connection_name": connection.name,
+        "connection_type": connection.connection_type,
+        "model": "gpt-4.1-mini",
+    }
+    serialized = str(stored.definition_snapshot).lower()
+    assert "api_key" not in serialized
+    assert "authorization" not in serialized
+
+
+def test_create_run_rejects_invalid_or_conflicting_metric_config(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(db)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+    base = {
+        "dataset_id": dataset.id,
+        "name": "Invalid config",
+        "mode": "static",
+        "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+    }
+
+    unknown = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            **base,
+            "metrics": [{"key": "deepeval.bias", "config": {"unknown": True}}],
+        },
+        headers=auth_headers,
+    )
+    conflict = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            **base,
+            "metrics": [
+                {
+                    "key": "deepeval.geval",
+                    "threshold": 0.7,
+                    "config": {"threshold": 0.2},
+                }
+            ],
+        },
+        headers=auth_headers,
+    )
+
+    assert unknown.status_code == 422
+    assert "unknown" in str(unknown.json()["detail"]).lower()
+    assert conflict.status_code == 422
+    assert "conflict" in str(conflict.json()["detail"]).lower()
+
+
+def test_create_run_preserves_legacy_metric_config_fields(
+    client, auth_headers, db, monkeypatch
+):
+    from app.models import Run
+
+    workspace, dataset, connection = _ready_dataset(db)
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Legacy G-Eval",
+            "mode": "static",
+            "metrics": [
+                {
+                    "key": "deepeval.geval",
+                    "threshold": 0.7,
+                    "rubric": "Prefer a direct answer",
+                }
+            ],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    stored = db.get(Run, response.json()["id"])
+    assert stored.metric_config["metrics"] == [
+        {
+            "key": "deepeval.geval",
+            "threshold": 0.7,
+            "rubric": "Prefer a direct answer",
+        }
+    ]
 
 
 def test_create_run_logs_dispatch_failure_and_keeps_outbox(
@@ -242,9 +382,7 @@ def test_nonmember_cannot_access_run(client, auth_headers, db, monkeypatch):
     assert response.status_code == 404
 
 
-def test_create_endpoint_run_encrypts_headers(
-    client, auth_headers, db, monkeypatch
-):
+def test_create_endpoint_run_encrypts_headers(client, auth_headers, db, monkeypatch):
     from app.models import Run
     from app.security import decrypt_secret
 
@@ -278,15 +416,17 @@ def test_create_endpoint_run_encrypts_headers(
     assert encrypted != "Bearer endpoint-secret"
     assert decrypt_secret(encrypted) == "Bearer endpoint-secret"
     assert "endpoint_config" not in response.json()
+    snapshot = stored.definition_snapshot
+    assert snapshot["endpoint"] == {
+        "method": "POST",
+        "response_jsonpath": "$.answer",
+    }
+    assert "authorization" not in str(snapshot).lower()
 
 
-def test_create_endpoint_run_requires_config(
-    client, auth_headers, db, monkeypatch
-):
+def test_create_endpoint_run_requires_config(client, auth_headers, db, monkeypatch):
 
-    workspace, dataset, connection = _ready_dataset(
-        db, schema_map={"input": "prompt"}
-    )
+    workspace, dataset, connection = _ready_dataset(db, schema_map={"input": "prompt"})
     monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
 
     response = client.post(
@@ -320,13 +460,17 @@ def _custom_connection(db, workspace_id, name="Gateway", key=None):
     return conn
 
 
-def test_create_run_custom_connection_valid_model(client, auth_headers, db, monkeypatch):
+def test_create_run_custom_connection_valid_model(
+    client, auth_headers, db, monkeypatch
+):
     from app.routers import runs
 
     workspace, dataset, _ = _ready_dataset(db, provider=None)
     connection = _custom_connection(db, workspace.id)
     monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
-    monkeypatch.setattr(runs, "discover_models", lambda base_url, api_key: ["chat-a", "chat-b"])
+    monkeypatch.setattr(
+        runs, "discover_models", lambda base_url, api_key: ["chat-a", "chat-b"]
+    )
     response = client.post(
         f"/api/workspaces/{workspace.id}/runs",
         json={
@@ -343,7 +487,9 @@ def test_create_run_custom_connection_valid_model(client, auth_headers, db, monk
     assert response.json()["judge_config"]["connection_type"] == "openai_compatible"
 
 
-def test_create_run_custom_connection_stale_model(client, auth_headers, db, monkeypatch):
+def test_create_run_custom_connection_stale_model(
+    client, auth_headers, db, monkeypatch
+):
     from app.routers import runs
 
     workspace, dataset, _ = _ready_dataset(db, provider=None)
@@ -390,7 +536,9 @@ def test_create_run_foreign_connection_rejected(client, auth_headers, db, monkey
     assert response.status_code == 422
 
 
-def test_create_run_embedding_from_separate_connection(client, auth_headers, db, monkeypatch):
+def test_create_run_embedding_from_separate_connection(
+    client, auth_headers, db, monkeypatch
+):
     from app.routers import runs
 
     # judge LLM on one custom connection, embeddings on a different one
@@ -398,7 +546,9 @@ def test_create_run_embedding_from_separate_connection(client, auth_headers, db,
     judge_conn = _custom_connection(db, workspace.id, name="LLM Gateway")
     embed_conn = _custom_connection(db, workspace.id, name="Embed Gateway")
     monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
-    monkeypatch.setattr(runs, "discover_models", lambda base_url, api_key: ["chat-a", "embed-x"])
+    monkeypatch.setattr(
+        runs, "discover_models", lambda base_url, api_key: ["chat-a", "embed-x"]
+    )
 
     # missing embedding connection → 422
     missing = client.post(
@@ -439,7 +589,9 @@ def test_create_run_embedding_from_separate_connection(client, auth_headers, db,
     assert cfg["connection_id"] == judge_conn.id
 
 
-def test_create_run_embedding_connection_must_support_embeddings(client, auth_headers, db, monkeypatch):
+def test_create_run_embedding_connection_must_support_embeddings(
+    client, auth_headers, db, monkeypatch
+):
     from app.models import ProviderConnection
     from app.routers import runs
     from app.security import encrypt_secret

@@ -132,15 +132,3 @@ METRICS = {
         ),
     ]
 }
-
-
-def metric_keys_requiring(resource: ResourceRole) -> frozenset[str]:
-    return frozenset(
-        key
-        for key, adapter in METRICS.items()
-        if resource in adapter.resources(adapter.default_config())
-    )
-
-
-# Compatibility export for submission code while resource discovery moves to adapters.
-EMBEDDING_METRICS = metric_keys_requiring("embedding")

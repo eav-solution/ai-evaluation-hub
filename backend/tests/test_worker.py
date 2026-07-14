@@ -2,7 +2,9 @@ def _one_row_run(db, *, name="One row"):
     from app.models import Dataset, ProviderConnection, Run, User, Workspace
     from app.security import encrypt_secret
 
-    user = User(email=f"{name.lower().replace(' ', '-')}@example.com", password_hash="x")
+    user = User(
+        email=f"{name.lower().replace(' ', '-')}@example.com", password_hash="x"
+    )
     db.add(user)
     db.flush()
     workspace = Workspace(name=name, owner_id=user.id)
@@ -100,20 +102,36 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
     )
     db.add(run)
     db.commit()
+    original_storage_path = dataset.storage_path
+    run.definition_snapshot = {
+        **run.definition_snapshot,
+        "dataset": {
+            "storage_path": original_storage_path,
+            "format": "json",
+        },
+    }
     dataset.schema_map = {
         "input": "changed_prompt",
         "actual_output": "changed_answer",
     }
+    dataset.storage_path = f"datasets/{workspace.id}/replacement.csv"
+    dataset.format = "csv"
     db.commit()
+
+    requested_keys = []
+
+    def get_snapshot_object(key):
+        requested_keys.append(key)
+        return (
+            b'[{"prompt":"one","answer":"a","changed_prompt":"wrong-one",'
+            b'"changed_answer":"wrong-a"},{"prompt":"two","answer":"b",'
+            b'"changed_prompt":"wrong-two","changed_answer":"wrong-b"}]'
+        )
 
     monkeypatch.setattr(
         storage,
         "get_object",
-        lambda key: (
-            b'[{"prompt":"one","answer":"a","changed_prompt":"wrong-one",'
-            b'"changed_answer":"wrong-a"},{"prompt":"two","answer":"b",'
-            b'"changed_prompt":"wrong-two","changed_answer":"wrong-b"}]'
-        ),
+        get_snapshot_object,
     )
     scorer_calls = []
 
@@ -154,6 +172,7 @@ def test_worker_scores_rows_and_builds_summaries(db, monkeypatch):
     assert len(results) == 2
     assert results[0].input == "one"
     assert results[0].actual == "a"
+    assert requested_keys == [original_storage_path]
     assert results[0].scores["test.good"]["score"] == 0.8
     assert results[0].scores["test.bad"]["error"] == "metric failed"
     summary = db.query(RunSummary).filter_by(metric_key="test.good").one()
@@ -194,9 +213,7 @@ def test_dispatch_outbox_event_enqueues_evaluation(db, monkeypatch):
     )
 
     assert tasks.dispatch_outbox_event(event_id) is True
-    assert published == [
-        {"args": ["run-1"], "task_id": f"evaluation-{event_id}"}
-    ]
+    assert published == [{"args": ["run-1"], "task_id": f"evaluation-{event_id}"}]
     db.expire_all()
     assert db.get(OutboxEvent, event_id) is None
 

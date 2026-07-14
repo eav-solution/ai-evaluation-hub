@@ -1,15 +1,16 @@
 import logging
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from app.connections import DiscoveryError, discover_models
 from app.deps import get_db, get_workspace
 from app.endpoints import EndpointConfig
-from app.evals.registry import EMBEDDING_METRICS, METRICS
+from app.evals.registry import METRICS
+from app.evals.snapshots import build_definition_snapshot
 from app.models import (
     Dataset,
     OutboxEvent,
@@ -47,8 +48,24 @@ def _confirm_custom_model(connection: ProviderConnection, model: str) -> None:
 
 class MetricIn(BaseModel):
     key: str
+    config: dict[str, Any] = Field(default_factory=dict)
     threshold: float | None = Field(default=None, ge=0, le=1)
     rubric: str | None = None
+
+    @model_validator(mode="after")
+    def merge_legacy_config(self):
+        merged = dict(self.config)
+        for name in ("threshold", "rubric"):
+            legacy_value = getattr(self, name)
+            if legacy_value is None:
+                continue
+            if name in merged and merged[name] != legacy_value:
+                raise ValueError(
+                    f"Metric config conflict for {name}: nested and legacy values differ"
+                )
+            merged[name] = legacy_value
+        self.config = merged
+        return self
 
 
 class JudgeIn(BaseModel):
@@ -110,9 +127,7 @@ def create_run(
     db: Session = Depends(get_db),
 ) -> dict:
     dataset = (
-        db.query(Dataset)
-        .filter_by(id=body.dataset_id, workspace_id=ws.id)
-        .first()
+        db.query(Dataset).filter_by(id=body.dataset_id, workspace_id=ws.id).first()
     )
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -127,22 +142,44 @@ def create_run(
             detail="Static runs need an actual_output column mapping",
         )
     if body.mode == "endpoint" and body.endpoint_config is None:
-        raise HTTPException(status_code=422, detail="Endpoint runs need endpoint_config")
+        raise HTTPException(
+            status_code=422, detail="Endpoint runs need endpoint_config"
+        )
 
     metric_keys = [item.key for item in body.metrics]
     if len(metric_keys) != len(set(metric_keys)):
         raise HTTPException(status_code=422, detail="Metrics must be unique")
-    for item in body.metrics:
+    selected = []
+    resource_roles = set()
+    for index, item in enumerate(body.metrics):
         adapter = METRICS.get(item.key)
         if adapter is None:
             raise HTTPException(status_code=422, detail=f"Unknown metric: {item.key}")
-        missing = adapter.requires - dataset.schema_map.keys()
+        try:
+            config = adapter.validate_config(item.config)
+        except ValidationError as exc:
+            errors = []
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            ):
+                errors.append(
+                    {
+                        **error,
+                        "loc": ["body", "metrics", index, "config", *error["loc"]],
+                    }
+                )
+            raise HTTPException(status_code=422, detail=errors) from exc
+        missing = adapter.requirements(config) - dataset.schema_map.keys()
         if missing:
             field = sorted(missing)[0]
             raise HTTPException(
                 status_code=422,
                 detail=f"{adapter.display_name} needs a {field} column",
             )
+        selected.append((adapter, config))
+        resource_roles.update(adapter.resources(config))
 
     connection = (
         db.query(ProviderConnection)
@@ -150,13 +187,11 @@ def create_run(
         .first()
     )
     if connection is None:
-        raise HTTPException(
-            status_code=422, detail="Provider connection not found"
-        )
+        raise HTTPException(status_code=422, detail="Provider connection not found")
     _confirm_custom_model(connection, body.judge.model)
 
     # Embeddings use their own connection, chosen only when a metric needs one.
-    needs_embedding = bool(set(metric_keys) & EMBEDDING_METRICS)
+    needs_embedding = "embedding" in resource_roles
     embedding_connection = None
     if needs_embedding:
         if not body.judge.embedding_connection_id or not body.judge.embedding_model:
@@ -170,7 +205,9 @@ def create_run(
             .first()
         )
         if embedding_connection is None:
-            raise HTTPException(status_code=422, detail="Embedding connection not found")
+            raise HTTPException(
+                status_code=422, detail="Embedding connection not found"
+            )
         if embedding_connection.connection_type not in EMBEDDING_CONNECTION_TYPES:
             raise HTTPException(
                 status_code=422,
@@ -191,21 +228,37 @@ def create_run(
         dataset_id=dataset.id,
         name=body.name,
         mode=body.mode,
-        metric_config={"metrics": [item.model_dump() for item in body.metrics]},
+        metric_config={
+            "metrics": [{"key": adapter.key, **config} for adapter, config in selected]
+        },
         endpoint_config=endpoint_config,
         judge_config={
             "connection_id": connection.id,
             "connection_name": connection.name,
             "connection_type": connection.connection_type,
             "model": body.judge.model,
-            "embedding_connection_id": embedding_connection.id if embedding_connection else None,
-            "embedding_connection_name": embedding_connection.name if embedding_connection else None,
+            "embedding_connection_id": embedding_connection.id
+            if embedding_connection
+            else None,
+            "embedding_connection_name": embedding_connection.name
+            if embedding_connection
+            else None,
             "embedding_connection_type": (
                 embedding_connection.connection_type if embedding_connection else None
             ),
-            "embedding_model": body.judge.embedding_model if embedding_connection else None,
+            "embedding_model": body.judge.embedding_model
+            if embedding_connection
+            else None,
         },
-        definition_snapshot={"schema_map": dict(dataset.schema_map)},
+        definition_snapshot=build_definition_snapshot(
+            dataset=dataset,
+            selected=selected,
+            judge_connection=connection,
+            judge_model=body.judge.model,
+            embedding_connection=embedding_connection,
+            embedding_model=body.judge.embedding_model,
+            endpoint_config=body.endpoint_config,
+        ),
         status="pending",
         progress_total=dataset.row_count,
     )
@@ -250,11 +303,7 @@ def get_run(
     db: Session = Depends(get_db),
 ) -> dict:
     row = _get_run(run_id, ws.id, db)
-    summaries = (
-        db.query(RunSummary)
-        .filter_by(run_id=row.id, workspace_id=ws.id)
-        .all()
-    )
+    summaries = db.query(RunSummary).filter_by(run_id=row.id, workspace_id=ws.id).all()
     return _run_out(row, summaries)
 
 
