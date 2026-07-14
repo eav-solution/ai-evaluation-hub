@@ -165,12 +165,17 @@ export function RunReport({
         <section className="panel chart-panel">
           <h2>Mean by metric</h2>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={run.summaries}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="metric_key" tick={false} />
-              <YAxis domain={[0, 1]} />
+            <BarChart data={run.summaries} layout="vertical" margin={{left: 24, right: 12}}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" domain={[0, 1]} />
+              <YAxis
+                type="category"
+                dataKey="metric_key"
+                width={140}
+                tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
+              />
               <Tooltip />
-              <Bar dataKey="mean" fill="#635bff" radius={[7, 7, 0, 0]} />
+              <Bar dataKey="mean" fill="#635bff" radius={[0, 7, 7, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </section>
@@ -179,8 +184,8 @@ export function RunReport({
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={histogram}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="range" />
-              <YAxis allowDecimals={false} />
+              <XAxis dataKey="range" label={{value: "Score range", position: "insideBottom", offset: -4}} />
+              <YAxis allowDecimals={false} label={{value: "Count", angle: -90, position: "insideLeft"}} />
               <Tooltip />
               <Bar dataKey="count" fill="#1ca58b" radius={[7, 7, 0, 0]} />
             </BarChart>
@@ -192,7 +197,10 @@ export function RunReport({
             <ResponsiveContainer width="100%" height={260}>
               <RadarChart data={run.summaries}>
                 <PolarGrid />
-                <PolarAngleAxis dataKey="metric_key" tick={false} />
+                <PolarAngleAxis
+                  dataKey="metric_key"
+                  tickFormatter={(key: string) => metricLabel(metricsByKey, key)}
+                />
                 <Radar dataKey="mean" stroke="#635bff" fill="#635bff" fillOpacity={0.3} />
               </RadarChart>
             </ResponsiveContainer>
