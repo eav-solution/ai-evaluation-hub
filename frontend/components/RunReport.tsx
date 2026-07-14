@@ -19,6 +19,10 @@ import {api, download} from "@/lib/api";
 import {MetricInfoButton, MetricInfoModal} from "@/components/MetricInfoModal";
 import type {Metric, Run, RunResult} from "@/lib/types";
 
+export function metricLabel(metricsByKey: Map<string, Metric>, key: string): string {
+  return metricsByKey.get(key)?.display_name ?? key;
+}
+
 export function RunReport({
   workspaceId,
   runId,

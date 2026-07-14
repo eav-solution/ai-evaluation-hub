@@ -2,7 +2,7 @@ import type {PropsWithChildren} from "react";
 import {fireEvent, render, screen, waitFor} from "@testing-library/react";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
-import {RunReport} from "@/components/RunReport";
+import {RunReport, metricLabel} from "@/components/RunReport";
 import {api} from "@/lib/api";
 import type {Metric, Run} from "@/lib/types";
 
@@ -86,6 +86,17 @@ function mockReportApi(catalog: Promise<Metric[]>) {
     return Promise.resolve(run) as never;
   });
 }
+
+describe("metricLabel", () => {
+  it("prefers the catalog display name", () => {
+    const map = new Map<string, Metric>([[metric.key, metric]]);
+    expect(metricLabel(map, metric.key)).toBe("Faithfulness");
+  });
+
+  it("falls back to the raw key when the metric is missing", () => {
+    expect(metricLabel(new Map(), "ragas.faithfulness")).toBe("ragas.faithfulness");
+  });
+});
 
 describe("RunReport metric information", () => {
   it("opens catalog information from a summary card", async () => {
