@@ -152,6 +152,8 @@ def test_create_run_normalizes_nested_metric_config_and_snapshot(
             "key": "deepeval.geval",
             "threshold": 0.5,
             "rubric": "Be concise",
+            "strict_mode": False,
+            "evaluation_fields": ["input", "actual_output"],
         }
     ]
     assert stored.definition_snapshot["libraries"] == {
@@ -165,6 +167,8 @@ def test_create_run_normalizes_nested_metric_config_and_snapshot(
             "config": {
                 "threshold": 0.5,
                 "rubric": "Be concise",
+                "strict_mode": False,
+                "evaluation_fields": ["input", "actual_output"],
             },
         }
     ]
@@ -257,6 +261,8 @@ def test_create_run_preserves_legacy_metric_config_fields(
             "key": "deepeval.geval",
             "threshold": 0.7,
             "rubric": "Prefer a direct answer",
+            "strict_mode": False,
+            "evaluation_fields": ["input", "actual_output"],
         }
     ]
 

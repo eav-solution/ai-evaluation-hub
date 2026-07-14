@@ -2,8 +2,10 @@ from app.evals.base import (
     CallableAdapter,
     DeepEvalMetricConfig,
     GEvalConfig,
+    JsonCorrectnessConfig,
     MetricCategory,
     MetricConfig,
+    PromptAlignmentConfig,
     ResourceRole,
 )
 from app.evals.metric_info import METRIC_INFO
@@ -75,6 +77,14 @@ METRICS = {
             resources={"judge", "embedding"},
         ),
         _adapter(
+            "ragas.context_relevance",
+            "Context Relevancy",
+            "How relevant the retrieved contexts are to the input.",
+            "rag",
+            "retrieval",
+            {"retrieval_contexts"},
+        ),
+        _adapter(
             "ragas.context_precision",
             "Context Precision",
             "Whether relevant contexts rank above irrelevant contexts.",
@@ -106,6 +116,14 @@ METRICS = {
             {"contexts"},
         ),
         _adapter(
+            "deepeval.contextual_relevancy",
+            "Contextual Relevancy",
+            "How relevant each retrieved context is to the input.",
+            "rag",
+            "retrieval",
+            {"retrieval_contexts"},
+        ),
+        _adapter(
             "deepeval.hallucination",
             "Hallucination",
             "Contradictions against known contexts.",
@@ -114,9 +132,32 @@ METRICS = {
             {"contexts"},
         ),
         _adapter(
+            "deepeval.prompt_alignment",
+            "Prompt Alignment",
+            "Whether the response follows configured prompt constraints.",
+            "general",
+            "text_safety",
+            config_model=PromptAlignmentConfig,
+        ),
+        _adapter(
+            "deepeval.json_correctness",
+            "JSON Correctness",
+            "Whether the response matches a supported object schema.",
+            "general",
+            "text_safety",
+            config_model=JsonCorrectnessConfig,
+        ),
+        _adapter(
             "deepeval.toxicity",
             "Toxicity",
             "Toxic content in the answer.",
+            "general",
+            "text_safety",
+        ),
+        _adapter(
+            "deepeval.pii_leakage",
+            "PII Leakage",
+            "Personal information exposed by the response.",
             "general",
             "text_safety",
         ),

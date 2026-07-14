@@ -52,12 +52,17 @@ def test_current_metric_capability_metadata_matches_the_approved_catalog():
     expected = {
         "ragas.faithfulness": ("rag", "generation"),
         "ragas.answer_relevancy": ("rag", "generation"),
+        "ragas.context_relevance": ("rag", "retrieval"),
         "ragas.context_precision": ("rag", "retrieval"),
         "ragas.context_recall": ("rag", "retrieval"),
         "deepeval.answer_relevancy": ("rag", "generation"),
         "deepeval.faithfulness": ("rag", "generation"),
+        "deepeval.contextual_relevancy": ("rag", "retrieval"),
         "deepeval.hallucination": ("general", "text_safety"),
+        "deepeval.prompt_alignment": ("general", "text_safety"),
+        "deepeval.json_correctness": ("general", "text_safety"),
         "deepeval.toxicity": ("general", "text_safety"),
+        "deepeval.pii_leakage": ("general", "text_safety"),
         "deepeval.bias": ("general", "text_safety"),
         "deepeval.geval": ("general", "text_safety"),
     }

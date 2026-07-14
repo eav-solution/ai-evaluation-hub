@@ -1,12 +1,17 @@
 EXPECTED_DIRECTIONS = {
     "ragas.faithfulness": "higher_is_better",
     "ragas.answer_relevancy": "higher_is_better",
+    "ragas.context_relevance": "higher_is_better",
     "ragas.context_precision": "higher_is_better",
     "ragas.context_recall": "higher_is_better",
     "deepeval.answer_relevancy": "higher_is_better",
     "deepeval.faithfulness": "higher_is_better",
+    "deepeval.contextual_relevancy": "higher_is_better",
     "deepeval.hallucination": "lower_is_better",
+    "deepeval.prompt_alignment": "higher_is_better",
+    "deepeval.json_correctness": "higher_is_better",
     "deepeval.toxicity": "lower_is_better",
+    "deepeval.pii_leakage": "lower_is_better",
     "deepeval.bias": "lower_is_better",
     "deepeval.geval": "higher_is_better",
 }

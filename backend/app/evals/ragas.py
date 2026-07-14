@@ -6,6 +6,7 @@ def _make_metric(name: str, judge: JudgeConfig):
     from ragas.metrics.collections import (
         AnswerRelevancy,
         ContextPrecisionWithReference,
+        ContextRelevance,
         ContextRecall,
         Faithfulness,
     )
@@ -13,9 +14,8 @@ def _make_metric(name: str, judge: JudgeConfig):
     llm = ragas_llm(judge)
     metrics = {
         "faithfulness": lambda: Faithfulness(llm),
-        "answer_relevancy": lambda: AnswerRelevancy(
-            llm, ragas_embeddings(judge)
-        ),
+        "answer_relevancy": lambda: AnswerRelevancy(llm, ragas_embeddings(judge)),
+        "context_relevance": lambda: ContextRelevance(llm),
         "context_precision": lambda: ContextPrecisionWithReference(llm),
         "context_recall": lambda: ContextRecall(llm),
     }
@@ -41,6 +41,10 @@ def score_metric(
         "answer_relevancy": {
             "user_input": row.input,
             "response": row.actual_output,
+        },
+        "context_relevance": {
+            "user_input": row.input,
+            "retrieved_contexts": row.retrieval_contexts,
         },
         "context_precision": {
             "user_input": row.input,
