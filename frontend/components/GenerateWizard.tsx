@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { ChangeEvent } from "react";
 
-import { api } from "@/lib/api";
+import { api, download } from "@/lib/api";
 import { computeMaxCount } from "@/lib/generation";
 import { modelOptions } from "@/lib/model-options";
 import { SearchableSelect } from "@/components/SearchableSelect";
@@ -15,7 +15,7 @@ import type {
   ProviderConnection,
 } from "@/lib/types";
 
-type Step = "configure" | "progress" | "review" | "saved";
+type Step = "configure" | "progress" | "review";
 
 function finiteInteger(value: number, min: number, max: number) {
   const integer = Number.isFinite(value) ? Math.trunc(value) : min;
@@ -27,7 +27,6 @@ export function GenerateWizard({ workspaceId }: { workspaceId: string }) {
   const [documents, setDocuments] = useState<DocumentFile[]>([]);
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [job, setJob] = useState<GenerationJob | null>(null);
-  const [savedDataset, setSavedDataset] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -281,28 +280,7 @@ export function GenerateWizard({ workspaceId }: { workspaceId: string }) {
   }
 
   if (step === "review" && job) {
-    return (
-      <ReviewTable
-        workspaceId={workspaceId}
-        job={job}
-        onSaved={(dataset) => {
-          setSavedDataset(dataset);
-          setStep("saved");
-        }}
-      />
-    );
-  }
-
-  if (step === "saved" && savedDataset) {
-    return (
-      <section className="panel">
-        <h2>Dataset saved</h2>
-        <p>
-          <strong>{savedDataset.name}</strong> is ready for evaluation runs.
-        </p>
-        <a className="primary" href={`/w/${workspaceId}/datasets`}>Go to datasets</a>
-      </section>
-    );
+    return <ReviewTable workspaceId={workspaceId} job={job} />;
   }
 
   return (
@@ -504,38 +482,51 @@ export function GenerateWizard({ workspaceId }: { workspaceId: string }) {
                   <strong>{item.name}</strong>
                   <small>
                     {item.status} · {item.generated_count}/{item.requested_count} records
-                    {item.dataset_created ? " · saved" : ""}
                   </small>
                 </span>
-                {(item.status === "pending" || item.status === "running") && (
-                  <>
+                <div className="actions">
+                  {(item.status === "pending" || item.status === "running") && (
+                    <>
+                      <button
+                        className="ghost"
+                        disabled={busy}
+                        onClick={() => { setJob(item); setStep("progress"); }}
+                      >
+                        View progress
+                      </button>
+                      <button className="ghost" disabled={busy} onClick={() => cancelJob(item)}>
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                  {item.status === "completed" && (
+                    <>
+                      <button className="ghost" disabled={busy} onClick={() => { setJob(item); setStep("review"); }}>
+                        Review
+                      </button>
+                      <button
+                        className="ghost"
+                        disabled={busy}
+                        onClick={() => download(
+                          `/api/workspaces/${workspaceId}/generation-jobs/${item.id}/records.csv`,
+                          `${item.name}.csv`,
+                        )}
+                      >
+                        Download CSV
+                      </button>
+                    </>
+                  )}
+                  {["completed", "failed", "cancelled"].includes(item.status) && (
                     <button
+                      aria-label={`Delete generation job ${item.name}`}
                       className="ghost"
                       disabled={busy}
-                      onClick={() => { setJob(item); setStep("progress"); }}
+                      onClick={() => deleteJob(item)}
                     >
-                      View progress
+                      Delete
                     </button>
-                    <button className="ghost" disabled={busy} onClick={() => cancelJob(item)}>
-                      Cancel
-                    </button>
-                  </>
-                )}
-                {item.status === "completed" && !item.dataset_created && (
-                  <button className="ghost" disabled={busy} onClick={() => { setJob(item); setStep("review"); }}>
-                    Review
-                  </button>
-                )}
-                {["completed", "failed", "cancelled"].includes(item.status) && (
-                  <button
-                    aria-label={`Delete generation job ${item.name}`}
-                    className="ghost"
-                    disabled={busy}
-                    onClick={() => deleteJob(item)}
-                  >
-                    Delete
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -548,15 +539,12 @@ export function GenerateWizard({ workspaceId }: { workspaceId: string }) {
 function ReviewTable({
   workspaceId,
   job,
-  onSaved,
 }: {
   workspaceId: string;
   job: GenerationJob;
-  onSaved: (dataset: { id: string; name: string }) => void;
 }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<GenerationRecordPage | null>(null);
-  const [datasetName, setDatasetName] = useState(job.name);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -649,8 +637,7 @@ function ReviewTable({
     return request;
   }
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
+  async function downloadCsv() {
     if (saving.current) return;
     saving.current = true;
     setBusy(true);
@@ -658,13 +645,12 @@ function ReviewTable({
     try {
       const edits = await Promise.all([...pendingEdits.current]);
       if (failedEdits.current.size || edits.some((succeeded) => !succeeded)) return;
-      const dataset = await api<{ id: string; name: string }>(
-        `/api/workspaces/${workspaceId}/generation-jobs/${job.id}/dataset`,
-        { method: "POST", body: JSON.stringify({ name: datasetName.trim() }) },
+      await download(
+        `/api/workspaces/${workspaceId}/generation-jobs/${job.id}/records.csv`,
+        `${job.name}.csv`,
       );
-      onSaved(dataset);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save dataset");
+      setError(reason instanceof Error ? reason.message : "Could not download records");
     } finally {
       saving.current = false;
       setBusy(false);
@@ -775,24 +761,22 @@ function ReviewTable({
           </div>
         )}
       </section>
-      <form className="panel" aria-label="Save dataset" onSubmit={save}>
-        <h2>Save as dataset</h2>
-        <label>
-          Dataset name
-          <input
-            value={datasetName}
-            disabled={busy}
-            onChange={(event) => setDatasetName(event.target.value)}
-            placeholder="Dataset name"
-          />
-        </label>
-        <button
-          className="primary"
-          disabled={busy || pendingCount > 0 || hasEditFailure || !datasetName.trim()}
-        >
-          {busy ? "Saving…" : "Save as dataset"}
-        </button>
-      </form>
+      <section className="panel" aria-label="Download records">
+        <h2>Download records</h2>
+        <p className="muted">
+          Download as CSV, fill in or correct answers offline, then upload it on the Datasets page.
+        </p>
+        <div className="list-row">
+          <button
+            className="primary"
+            disabled={busy || pendingCount > 0 || hasEditFailure}
+            onClick={downloadCsv}
+          >
+            {busy ? "Preparing…" : "Download CSV"}
+          </button>
+          <a className="ghost" href={`/w/${workspaceId}/datasets`}>Go to datasets</a>
+        </div>
+      </section>
     </div>
   );
 }

@@ -389,6 +389,25 @@ def _completed_job(client, auth_headers, workspace_id):
     ).json()
 
 
+def _upload_dataset(client, auth_headers, workspace_id, *, name, rows, schema_map=None):
+    import json as jsonlib
+
+    body = ("\n".join(jsonlib.dumps(row) for row in rows) + "\n").encode()
+    dataset = client.post(
+        f"/api/workspaces/{workspace_id}/datasets",
+        data={"name": name},
+        files={"file": ("qa.jsonl", body, "application/json")},
+        headers=auth_headers,
+    ).json()
+    if schema_map is not None:
+        dataset = client.patch(
+            f"/api/workspaces/{workspace_id}/datasets/{dataset['id']}/schema-map",
+            json={"schema_map": schema_map},
+            headers=auth_headers,
+        ).json()
+    return dataset
+
+
 def test_list_records_paginated(
     client, auth_headers, object_store, fake_generator, workspace_with_key
 ):
@@ -491,7 +510,7 @@ def test_patch_missing_record_404(
     assert response.status_code == 404
 
 
-def test_patch_record_requires_completed_unsaved_job(
+def test_patch_record_requires_completed_job(
     client, auth_headers, object_store, fake_generator, workspace_with_key, db
 ):
     from app.models import GenerationJob
@@ -513,249 +532,11 @@ def test_patch_record_requires_completed_unsaved_job(
     )
     assert running.status_code == 409
 
-    saved_job.status = "completed"
-    db.commit()
-    saved = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Final"},
-        headers=auth_headers,
-    )
-    assert saved.status_code == 201
-    after_save = client.patch(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records/{record['id']}",
-        json={"question": "Too late?"},
-        headers=auth_headers,
-    )
-    assert after_save.status_code == 409
-
-
-def test_patch_record_waits_for_concurrent_save(
-    client,
-    auth_headers,
-    object_store,
-    fake_generator,
-    workspace_with_key,
-    monkeypatch,
-):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
-
-    from fastapi.testclient import TestClient
-
-    from app import storage
-    from app.main import app
-
-    workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    record = client.get(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records",
-        headers=auth_headers,
-    ).json()["records"][0]
-    save_holds_lock = Event()
-    release_save = Event()
-
-    def blocking_put(key, data):
-        save_holds_lock.set()
-        assert release_save.wait(timeout=5)
-        object_store[key] = data
-
-    monkeypatch.setattr(storage, "put_object", blocking_put)
-
-    def save():
-        with TestClient(app) as concurrent_client:
-            return concurrent_client.post(
-                f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-                json={"name": "Final"},
-                headers=auth_headers,
-            ).status_code
-
-    def patch_record():
-        with TestClient(app) as concurrent_client:
-            return concurrent_client.patch(
-                f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records/{record['id']}",
-                json={"question": "Racing edit?"},
-                headers=auth_headers,
-            ).status_code
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        save_future = executor.submit(save)
-        assert save_holds_lock.wait(timeout=5)
-        patch_future = executor.submit(patch_record)
-        release_save.set()
-        assert save_future.result(timeout=5) == 201
-        assert patch_future.result(timeout=5) == 409
-
-
-def test_save_dataset_materializes_jsonl(
-    client, auth_headers, object_store, fake_generator, workspace_with_key
-):
-    import json as jsonlib
-
-    workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    records = client.get(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records",
-        headers=auth_headers,
-    ).json()["records"]
-    client.patch(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records/{records[0]['id']}",
-        json={"deleted": True},
-        headers=auth_headers,
-    )
-
-    saved = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Generated QA"},
-        headers=auth_headers,
-    )
-    assert saved.status_code == 201
-    dataset = saved.json()
-    assert set(dataset) == {
-        "id",
-        "name",
-        "format",
-        "row_count",
-        "storage_path",
-        "schema_map",
-    }
-    assert dataset["format"] == "jsonl"
-    assert dataset["row_count"] == len(records) - 1
-    assert dataset["schema_map"] == {
-        "input": "question",
-        "expected_output": "answer",
-        "contexts": "contexts",
-    }
-
-    raw_bytes = object_store[dataset["storage_path"]]
-    assert raw_bytes.endswith(b"\n")
-    raw = raw_bytes.decode("utf-8")
-    lines = [jsonlib.loads(line) for line in raw.strip().splitlines()]
-    assert len(lines) == len(records) - 1
-    assert set(lines[0]) == {"question", "answer", "contexts"}
-    assert [line["question"] for line in lines] == [
-        record["question"] for record in records[1:]
-    ]
-
-    # job now points at the dataset; a second save conflicts
-    fetched = client.get(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}",
-        headers=auth_headers,
-    ).json()
-    assert fetched["dataset_id"] == dataset["id"]
-    again = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Again"},
-        headers=auth_headers,
-    )
-    assert again.status_code == 409
-
-    # the dataset is a first-class dataset
-    listed = client.get(
-        f"/api/workspaces/{workspace_id}/datasets", headers=auth_headers
-    ).json()
-    assert any(item["id"] == dataset["id"] for item in listed)
-
-
-def test_save_dataset_serializes_concurrent_requests(
-    client,
-    auth_headers,
-    object_store,
-    fake_generator,
-    workspace_with_key,
-    monkeypatch,
-):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Barrier, Event, Lock
-
-    from fastapi.testclient import TestClient
-
-    from app import storage
-    from app.main import app
-
-    workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    start = Barrier(2)
-    second_write = Event()
-    write_lock = Lock()
-    write_count = 0
-
-    def synchronized_put(key, data):
-        nonlocal write_count
-        with write_lock:
-            write_count += 1
-            if write_count == 2:
-                second_write.set()
-        second_write.wait(timeout=1)
-        object_store[key] = data
-
-    monkeypatch.setattr(storage, "put_object", synchronized_put)
-
-    def save(name):
-        start.wait()
-        with TestClient(app) as concurrent_client:
-            return concurrent_client.post(
-                f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-                json={"name": name},
-                headers=auth_headers,
-            ).status_code
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [
-            executor.submit(save, "Concurrent A"),
-            executor.submit(save, "Concurrent B"),
-        ]
-        statuses = sorted(future.result() for future in futures)
-
-    assert statuses == [201, 409]
-    datasets = client.get(
-        f"/api/workspaces/{workspace_id}/datasets", headers=auth_headers
-    ).json()
-    assert len(datasets) == 1
-    assert len([key for key in object_store if key.startswith("datasets/")]) == 1
-
-
-def test_delete_generated_dataset_preserves_one_save_marker(
-    client, auth_headers, object_store, fake_generator, workspace_with_key
-):
-    workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    dataset = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Generated QA"},
-        headers=auth_headers,
-    ).json()
-    deleted = client.delete(
-        f"/api/workspaces/{workspace_id}/datasets/{dataset['id']}",
-        headers=auth_headers,
-    )
-
-    assert deleted.status_code == 204
-    fetched_job = client.get(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}",
-        headers=auth_headers,
-    ).json()
-    assert fetched_job["dataset_id"] is None
-    assert fetched_job["dataset_created"] is True
-    fetched_dataset = client.get(
-        f"/api/workspaces/{workspace_id}/datasets/{dataset['id']}",
-        headers=auth_headers,
-    )
-    assert fetched_dataset.status_code == 404
-    assert dataset["storage_path"] not in object_store
-
-    saved_again = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Generated QA again"},
-        headers=auth_headers,
-    )
-    assert saved_again.status_code == 409
-
 
 def test_delete_dataset_queues_failed_storage_cleanup(
     client,
     auth_headers,
     object_store,
-    fake_generator,
     workspace_with_key,
     monkeypatch,
     db,
@@ -764,12 +545,13 @@ def test_delete_dataset_queues_failed_storage_cleanup(
     from app.models import OutboxEvent
 
     workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    dataset = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Generated QA"},
-        headers=auth_headers,
-    ).json()
+    dataset = _upload_dataset(
+        client,
+        auth_headers,
+        workspace_id,
+        name="Manual QA",
+        rows=[{"question": "q", "answer": "a"}],
+    )
     monkeypatch.setattr(
         storage,
         "delete_object",
@@ -792,95 +574,10 @@ def test_delete_dataset_queues_failed_storage_cleanup(
     assert dataset["storage_path"] not in object_store
 
 
-def test_save_dataset_requires_completed_job(
-    client, auth_headers, object_store, db, workspace_with_key
-):
-    from app.models import GenerationJob
-
-    workspace_id = workspace_with_key
-    job = GenerationJob(
-        workspace_id=workspace_id,
-        name="Running",
-        document_ids=["doc-x"],
-        mode="chunk",
-        requested_count=3,
-        max_count=3,
-        generator_config={"provider": "openai", "model": "m"},
-        options={"questions_per_chunk": 3, "language": None},
-        status="running",
-    )
-    db.add(job)
-    db.commit()
-    response = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job.id}/dataset",
-        json={"name": "Too soon"},
-        headers=auth_headers,
-    )
-    assert response.status_code == 409
-
-
-def test_save_dataset_requires_records(
-    client, auth_headers, object_store, fake_generator, workspace_with_key
-):
-    workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    records = client.get(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records",
-        headers=auth_headers,
-    ).json()["records"]
-    for record in records:
-        client.patch(
-            f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records/{record['id']}",
-            json={"deleted": True},
-            headers=auth_headers,
-        )
-    response = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Empty"},
-        headers=auth_headers,
-    )
-    assert response.status_code == 422
-
-
-def test_save_dataset_cleans_up_when_storage_write_loses_response(
-    client,
-    auth_headers,
-    object_store,
-    fake_generator,
-    workspace_with_key,
-    db,
-    monkeypatch,
-):
-    from app import storage
-    from app.models import Dataset, GenerationJob
-
-    workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-
-    def put_then_raise(key, data):
-        object_store[key] = data
-        raise RuntimeError("lost storage response")
-
-    monkeypatch.setattr(storage, "put_object", put_then_raise)
-
-    with pytest.raises(RuntimeError, match="lost storage response"):
-        client.post(
-            f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-            json={"name": "Generated QA"},
-            headers=auth_headers,
-        )
-
-    db.expire_all()
-    assert db.query(Dataset).filter_by(workspace_id=workspace_id).count() == 0
-    assert db.get(GenerationJob, job["id"]).dataset_id is None
-    assert not any(key.startswith("datasets/") for key in object_store)
-
-
 def test_generated_dataset_runs_endpoint_evaluation(
     client,
     auth_headers,
     object_store,
-    fake_generator,
     workspace_with_key,
     monkeypatch,
 ):
@@ -888,12 +585,22 @@ def test_generated_dataset_runs_endpoint_evaluation(
     from app.evals.registry import METRICS
 
     workspace_id = workspace_with_key
-    job = _completed_job(client, auth_headers, workspace_id)
-    dataset = client.post(
-        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/dataset",
-        json={"name": "Generated QA"},
-        headers=auth_headers,
-    ).json()
+    # mirrors a downloaded-then-uploaded generated dataset: question/answer/contexts
+    dataset = _upload_dataset(
+        client,
+        auth_headers,
+        workspace_id,
+        name="Uploaded QA",
+        rows=[
+            {"question": "What is X?", "answer": "X.", "contexts": ["ctx"]},
+            {"question": "What is Y?", "answer": "Y.", "contexts": ["ctx"]},
+        ],
+        schema_map={
+            "input": "question",
+            "expected_output": "answer",
+            "contexts": "contexts",
+        },
+    )
 
     adapter = CallableAdapter(
         key="test.always_pass",
@@ -940,6 +647,99 @@ def test_generated_dataset_runs_endpoint_evaluation(
     ).json()
     assert run["status"] == "completed"
     assert run["progress_done"] == dataset["row_count"]
+
+
+def test_download_records_csv_matches_records(
+    client, auth_headers, object_store, fake_generator, workspace_with_key
+):
+    import csv as csvlib
+    import io
+    import json as jsonlib
+
+    workspace_id = workspace_with_key
+    job = _completed_job(client, auth_headers, workspace_id)
+    records = client.get(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records",
+        headers=auth_headers,
+    ).json()["records"]
+
+    response = client.get(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records.csv",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+
+    rows = list(csvlib.DictReader(io.StringIO(response.text)))
+    assert list(rows[0].keys()) == ["question", "answer", "contexts"]
+    assert len(rows) == len(records)
+    assert rows[0]["question"] == records[0]["question"]
+    assert rows[0]["answer"] == records[0]["answer"]
+    assert jsonlib.loads(rows[0]["contexts"]) == records[0]["contexts"]
+
+
+def test_download_records_csv_excludes_deleted_and_escapes(
+    client, auth_headers, object_store, fake_generator, workspace_with_key
+):
+    import csv as csvlib
+    import io
+
+    workspace_id = workspace_with_key
+    job = _completed_job(client, auth_headers, workspace_id)
+    records = client.get(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records",
+        headers=auth_headers,
+    ).json()["records"]
+
+    client.patch(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records/{records[0]['id']}",
+        json={"deleted": True},
+        headers=auth_headers,
+    )
+    tricky = 'He said, "hi"\nnew line'
+    client.patch(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records/{records[1]['id']}",
+        json={"answer": tricky},
+        headers=auth_headers,
+    )
+
+    response = client.get(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records.csv",
+        headers=auth_headers,
+    )
+    rows = list(csvlib.DictReader(io.StringIO(response.text)))
+    assert len(rows) == len(records) - 1
+    assert records[0]["question"] not in {row["question"] for row in rows}
+    assert tricky in {row["answer"] for row in rows}
+
+
+def test_download_records_csv_requires_completed(
+    client, auth_headers, db, object_store, fake_generator, workspace_with_key
+):
+    from app.models import GenerationJob
+
+    workspace_id = workspace_with_key
+    job = _completed_job(client, auth_headers, workspace_id)
+    row = db.get(GenerationJob, job["id"])
+    row.status = "pending"
+    db.commit()
+
+    response = client.get(
+        f"/api/workspaces/{workspace_id}/generation-jobs/{job['id']}/records.csv",
+        headers=auth_headers,
+    )
+    assert response.status_code == 409
+
+
+def test_download_records_csv_missing_job_returns_404(
+    client, auth_headers, workspace_with_key
+):
+    response = client.get(
+        f"/api/workspaces/{workspace_with_key}/generation-jobs/not-a-job/records.csv",
+        headers=auth_headers,
+    )
+    assert response.status_code == 404
 
 
 def test_create_job_custom_connection(client, auth_headers, object_store, fake_generator, db, monkeypatch):

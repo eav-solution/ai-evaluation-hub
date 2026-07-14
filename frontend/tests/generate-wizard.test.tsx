@@ -202,12 +202,15 @@ describe("GenerateWizard", () => {
     expect(screen.queryByRole("button", { name: /Delete generation job/ })).not.toBeInTheDocument();
   });
 
-  it("waits for an in-flight edit before saving", async () => {
+  it("blocks download until an in-flight edit resolves", async () => {
     let resolvePatch!: (response: Response) => void;
     const patchResponse = new Promise<Response>((resolve) => {
       resolvePatch = resolve;
     });
     const calls: string[] = [];
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -218,13 +221,13 @@ describe("GenerateWizard", () => {
         if (path.includes("/records?") && !init?.method) {
           return jsonResponse({ records: [generatedRecord], page: 1, page_size: 50, total: 1 });
         }
+        if (path.includes("/records.csv")) {
+          calls.push("download");
+          return new Response("question,answer,contexts\n", { status: 200, headers: { "content-type": "text/csv" } });
+        }
         if (init?.method === "PATCH") {
           calls.push("patch");
           return patchResponse;
-        }
-        if (path.endsWith("/dataset") && init?.method === "POST") {
-          calls.push("save");
-          return jsonResponse({ id: "dataset-1", name: completedJob.name });
         }
         throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${path}`);
       }),
@@ -236,9 +239,8 @@ describe("GenerateWizard", () => {
     fireEvent.change(question, { target: { value: "Edited question" } });
     fireEvent.blur(question);
 
-    const save = screen.getByRole("button", { name: "Save as dataset" });
-    expect(save).toBeDisabled();
-    fireEvent.submit(screen.getByRole("form", { name: "Save dataset" }));
+    const downloadBtn = screen.getByRole("button", { name: "Download CSV" });
+    expect(downloadBtn).toBeDisabled();
     expect(calls).toEqual(["patch"]);
 
     await act(async () => {
@@ -246,7 +248,9 @@ describe("GenerateWizard", () => {
       await patchResponse;
     });
 
-    await waitFor(() => expect(calls).toEqual(["patch", "save"]));
+    await waitFor(() => expect(downloadBtn).toBeEnabled());
+    fireEvent.click(downloadBtn);
+    await waitFor(() => expect(calls).toContain("download"));
   });
 
   it("clamps fractional and oversized launch values in the payload", async () => {
@@ -479,7 +483,7 @@ describe("GenerateWizard", () => {
     expect(screen.getByLabelText("Question 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Answer 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Contexts 1")).toBeInTheDocument();
-    expect(screen.getByLabelText("Dataset name")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download CSV" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete record 1" })).toBeInTheDocument();
   });
 
@@ -575,8 +579,7 @@ describe("GenerateWizard", () => {
     expect(screen.getByRole("button", { name: "Delete guide.md" })).toBeInTheDocument();
   });
 
-  it("keeps a failed edit blocking save after another edit succeeds", async () => {
-    let saveCalls = 0;
+  it("keeps a failed edit blocking download after another edit succeeds", async () => {
     let answerSaved = false;
     vi.stubGlobal(
       "fetch",
@@ -594,10 +597,6 @@ describe("GenerateWizard", () => {
           answerSaved = true;
           return jsonResponse({ ...generatedRecord, answer: body.answer });
         }
-        if (path.endsWith("/dataset") && init?.method === "POST") {
-          saveCalls += 1;
-          return jsonResponse({ id: "dataset-1", name: completedJob.name });
-        }
         throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${path}`);
       }),
     );
@@ -614,64 +613,7 @@ describe("GenerateWizard", () => {
     fireEvent.blur(answer);
     await waitFor(() => expect(answerSaved).toBe(true));
 
-    fireEvent.submit(screen.getByRole("form", { name: "Save dataset" }));
-    await act(async () => Promise.resolve());
-    expect(saveCalls).toBe(0);
-    expect(screen.getByRole("button", { name: "Save as dataset" })).toBeDisabled();
-  });
-
-  it("locks review mutations once dataset saving begins", async () => {
-    let resolveSave!: (response: Response) => void;
-    const saveResponse = new Promise<Response>((resolve) => {
-      resolveSave = resolve;
-    });
-    let patchCalls = 0;
-    let saveCalls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        const path = String(input);
-        if (path.endsWith("/documents")) return jsonResponse([]);
-        if (path.endsWith("/provider-connections")) return jsonResponse([{ id: "conn-openai", name: "OpenAI", connection_type: "openai", base_url: null, has_key: true, key_hint: "…key" }]);
-        if (path.endsWith("/generation-jobs")) return jsonResponse([completedJob]);
-        if (path.includes("/records?") && !init?.method) {
-          return jsonResponse({ records: [generatedRecord], page: 1, page_size: 50, total: 51 });
-        }
-        if (init?.method === "PATCH") {
-          patchCalls += 1;
-          return jsonResponse(generatedRecord);
-        }
-        if (path.endsWith("/dataset") && init?.method === "POST") {
-          saveCalls += 1;
-          return saveResponse;
-        }
-        throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${path}`);
-      }),
-    );
-
-    render(<GenerateWizard workspaceId="ws-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
-    const question = await screen.findByLabelText("Question 1");
-    fireEvent.change(question, { target: { value: "Late edit" } });
-    fireEvent.submit(screen.getByRole("form", { name: "Save dataset" }));
-    await waitFor(() => expect(saveCalls).toBe(1));
-
-    expect(question).toBeDisabled();
-    expect(screen.getByLabelText("Answer 1")).toBeDisabled();
-    expect(screen.getByLabelText("Contexts 1")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Delete record 1" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByLabelText("Dataset name")).toBeDisabled();
-
-    fireEvent.blur(question);
-    await act(async () => Promise.resolve());
-    expect(patchCalls).toBe(0);
-
-    await act(async () => {
-      resolveSave(jsonResponse({ id: "dataset-1", name: completedJob.name }));
-      await saveResponse;
-    });
-    expect(await screen.findByRole("heading", { name: "Dataset saved" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download CSV" })).toBeDisabled();
   });
 
   it("serializes same-field edits in server order", async () => {
@@ -714,7 +656,7 @@ describe("GenerateWizard", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Save as dataset" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
     });
   });
 
@@ -757,7 +699,7 @@ describe("GenerateWizard", () => {
       requests[1].resolve(jsonResponse(generatedRecord));
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Save as dataset" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
     });
   });
 
@@ -791,7 +733,7 @@ describe("GenerateWizard", () => {
     fireEvent.change(question, { target: { value: generatedRecord.question } });
     fireEvent.blur(question);
     expect(screen.queryByText("Edit failed")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save as dataset" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
 
     const contexts = screen.getByLabelText("Contexts 1");
     fireEvent.change(contexts, { target: { value: "Bad context edit" } });
@@ -801,7 +743,7 @@ describe("GenerateWizard", () => {
     fireEvent.blur(contexts);
 
     expect(screen.queryByText("Edit failed")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save as dataset" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
     expect(patchCalls).toBe(2);
   });
 
@@ -825,6 +767,33 @@ describe("GenerateWizard", () => {
     render(<GenerateWizard workspaceId="ws-1" />);
     fireEvent.click(await screen.findByLabelText("LLM Model"));
     expect(screen.getByRole("searchbox", { name: "Search models" })).toBeInTheDocument();
+  });
+
+  it("downloads a completed job's CSV directly from history", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    let csvRequested = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const path = String(input);
+        if (path.endsWith("/documents")) return jsonResponse([]);
+        if (path.endsWith("/provider-connections")) return jsonResponse([]);
+        if (path.endsWith("/generation-jobs")) return jsonResponse([completedJob]);
+        if (path.includes("/records.csv")) {
+          csvRequested = true;
+          return new Response("question,answer,contexts\n", { status: 200, headers: { "content-type": "text/csv" } });
+        }
+        throw new Error(`Unexpected request: GET ${path}`);
+      }),
+    );
+
+    render(<GenerateWizard workspaceId="ws-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Download CSV" }));
+
+    await waitFor(() => expect(csvRequested).toBe(true));
+    expect(clickSpy).toHaveBeenCalled();
   });
 
 });

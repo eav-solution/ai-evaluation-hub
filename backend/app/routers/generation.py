@@ -1,18 +1,18 @@
+import csv
+import io
 import json
-import uuid
+import re
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app import storage
 from app.config import settings
 from app.connections import DiscoveryError, discover_models
 from app.deps import get_db, get_workspace
 from app.models import (
-    Dataset,
     Document,
     GenerationJob,
     GenerationRecord,
@@ -54,10 +54,6 @@ class RecordPatch(BaseModel):
     answer: str | None = None
     contexts: list[str] | None = None
     deleted: bool | None = None
-
-
-class SaveDatasetIn(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
 
 
 def _job_out(row: GenerationJob) -> dict:
@@ -315,71 +311,40 @@ def update_record(
     return _record_out(record)
 
 
-@router.post("/{job_id}/dataset", status_code=201)
-def save_dataset(
+def _safe_filename(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
+    return slug or "generation-job"
+
+
+@router.get("/{job_id}/records.csv")
+def download_records_csv(
     job_id: str,
-    body: SaveDatasetIn,
     ws: Workspace = Depends(get_workspace),
     db: Session = Depends(get_db),
-) -> dict:
-    job = _get_job(job_id, ws.id, db, for_update=True)
+) -> Response:
+    job = _get_job(job_id, ws.id, db)
     if job.status != "completed":
         raise HTTPException(status_code=409, detail="Generation job is not completed")
-    if job.dataset_created:
-        raise HTTPException(status_code=409, detail="Job already produced a dataset")
     records = (
         db.query(GenerationRecord)
         .filter_by(job_id=job.id, workspace_id=ws.id, deleted=False)
         .order_by(GenerationRecord.record_index)
         .all()
     )
-    if not records:
-        raise HTTPException(status_code=422, detail="No records to save")
-    lines = [
-        json.dumps(
-            {
-                "question": record.question,
-                "answer": record.answer,
-                "contexts": record.contexts,
-            },
-            ensure_ascii=False,
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["question", "answer", "contexts"])
+    for record in records:
+        writer.writerow(
+            [
+                record.question,
+                record.answer,
+                json.dumps(record.contexts, ensure_ascii=False),
+            ]
         )
-        for record in records
-    ]
-    data = ("\n".join(lines) + "\n").encode("utf-8")
-    dataset_id = str(uuid.uuid4())
-    key = f"datasets/{ws.id}/{dataset_id}.jsonl"
-    dataset = Dataset(
-        id=dataset_id,
-        workspace_id=ws.id,
-        name=body.name,
-        format="jsonl",
-        row_count=len(records),
-        storage_path=key,
-        schema_map={
-            "input": "question",
-            "expected_output": "answer",
-            "contexts": "contexts",
-        },
+    filename = _safe_filename(job.name)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'},
     )
-    try:
-        storage.put_object(key, data)
-        db.add(dataset)
-        job.dataset_id = dataset.id
-        job.dataset_created = True
-        db.commit()
-    except Exception:
-        db.rollback()
-        try:
-            storage.delete_object(key)
-        except Exception:
-            pass
-        raise
-    return {
-        "id": dataset.id,
-        "name": dataset.name,
-        "format": dataset.format,
-        "row_count": dataset.row_count,
-        "storage_path": dataset.storage_path,
-        "schema_map": dataset.schema_map,
-    }

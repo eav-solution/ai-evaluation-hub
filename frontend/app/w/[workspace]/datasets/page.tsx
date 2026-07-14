@@ -25,7 +25,7 @@ export default function DatasetsPage() {
   return (
     <div className="stack">
       <header className="page-header">
-        <div><p className="eyebrow">Data foundation</p><h1>Datasets</h1><p className="muted">Upload examples once, then reuse them across evaluation runs.</p></div>
+        <div><p className="eyebrow">Data foundation</p><h1>Datasets</h1><p className="muted">Upload examples once, then reuse them across evaluation runs. Generated records from a job? Download its CSV, add answers, then upload it here.</p></div>
         <Link className="primary" href={`/w/${workspace}/datasets/generate`}>Generate from documents</Link>
       </header>
       {error && <p className="notice error">{error}</p>}
