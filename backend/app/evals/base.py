@@ -141,6 +141,19 @@ class AgentLoopDetectionConfig(DeepEvalMetricConfig):
         return self
 
 
+class ConversationWindowConfig(DeepEvalMetricConfig):
+    window_size: int = Field(
+        default=3,
+        ge=1,
+        le=100,
+        description="Number of adjacent turns evaluated together.",
+    )
+
+
+class TurnRelevancyConfig(ConversationWindowConfig):
+    window_size: int = Field(default=10, ge=1, le=100)
+
+
 @dataclass(frozen=True)
 class JudgeConfig:
     provider: str  # 'openai' | 'anthropic' | 'openai_compatible'

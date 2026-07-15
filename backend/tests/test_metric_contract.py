@@ -68,6 +68,11 @@ def test_current_metric_capability_metadata_matches_the_approved_catalog():
         "deepeval.task_completion": ("agentic", "trace"),
         "deepeval.agent_loop_detection": ("agentic", "trace"),
         "deepeval.tool_correctness": ("agentic", "tools"),
+        "deepeval.conversation_completeness": ("general", "conversational"),
+        "deepeval.turn_relevancy": ("general", "conversational"),
+        "deepeval.role_adherence": ("general", "conversational"),
+        "deepeval.mcp_task_completion": ("agentic", "mcp"),
+        "deepeval.mcp_use": ("agentic", "mcp"),
     }
 
     assert {
@@ -90,7 +95,7 @@ def test_catalog_exposes_dynamic_requirements_and_legacy_aliases():
 def test_agentic_adapters_publish_sample_requirements_and_resources():
     from app.evals.registry import METRICS
 
-    assert len(METRICS) == 18
+    assert len(METRICS) == 23
     assert METRICS["deepeval.task_completion"].requires == frozenset(
         {"agent_trace"}
     )
@@ -135,3 +140,42 @@ def test_agentic_adapter_config_is_generated_and_validated():
                 "check_call_graph_cycles": False,
             }
         )
+
+
+def test_conversational_and_mcp_adapter_metadata():
+    from app.evals.registry import METRICS
+
+    keys = (
+        "deepeval.conversation_completeness",
+        "deepeval.turn_relevancy",
+        "deepeval.role_adherence",
+        "deepeval.mcp_task_completion",
+        "deepeval.mcp_use",
+    )
+    for key in keys:
+        assert METRICS[key].sample_kind == "conversation"
+        assert METRICS[key].resources({}) == frozenset({"judge"})
+    assert METRICS["deepeval.conversation_completeness"].category == "general"
+    assert METRICS["deepeval.conversation_completeness"].family == (
+        "conversational"
+    )
+    assert METRICS["deepeval.mcp_use"].category == "agentic"
+    assert METRICS["deepeval.mcp_use"].family == "mcp"
+    assert METRICS["deepeval.role_adherence"].requirements({}) == frozenset(
+        {"turns", "chatbot_role"}
+    )
+    assert METRICS["deepeval.mcp_task_completion"].requirements({}) == (
+        frozenset({"turns", "mcp_metadata"})
+    )
+    assert METRICS["deepeval.mcp_use"].requirements({}) == frozenset(
+        {"turns", "mcp_metadata", "mcp_events"}
+    )
+
+
+def test_conversation_window_defaults_follow_upstream():
+    from app.evals.registry import METRICS
+
+    completeness = METRICS["deepeval.conversation_completeness"].default_config()
+    relevancy = METRICS["deepeval.turn_relevancy"].default_config()
+    assert completeness["window_size"] == 3
+    assert relevancy["window_size"] == 10

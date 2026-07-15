@@ -1,6 +1,7 @@
 from app.evals.base import (
     AgentLoopDetectionConfig,
     CallableAdapter,
+    ConversationWindowConfig,
     DeepEvalMetricConfig,
     GEvalConfig,
     JsonCorrectnessConfig,
@@ -10,6 +11,7 @@ from app.evals.base import (
     ResourceRole,
     TaskCompletionConfig,
     ToolCorrectnessConfig,
+    TurnRelevancyConfig,
 )
 from app.evals.metric_info import METRIC_INFO
 from pydantic import BaseModel
@@ -223,6 +225,53 @@ METRICS = {
             set(),
             config_model=ToolCorrectnessConfig,
             sample_kind="agent_trace",
+        ),
+        _adapter(
+            "deepeval.conversation_completeness",
+            "Conversation Completeness",
+            "Whether the conversation satisfied the user's intentions end to end.",
+            "general",
+            "conversational",
+            {"turns"},
+            config_model=ConversationWindowConfig,
+            sample_kind="conversation",
+        ),
+        _adapter(
+            "deepeval.turn_relevancy",
+            "Turn Relevancy",
+            "Whether each assistant turn stays relevant to the recent conversation.",
+            "general",
+            "conversational",
+            {"turns"},
+            config_model=TurnRelevancyConfig,
+            sample_kind="conversation",
+        ),
+        _adapter(
+            "deepeval.role_adherence",
+            "Role Adherence",
+            "Whether the assistant stays in its declared chatbot role.",
+            "general",
+            "conversational",
+            {"turns", "chatbot_role"},
+            sample_kind="conversation",
+        ),
+        _adapter(
+            "deepeval.mcp_task_completion",
+            "MCP Task Completion",
+            "Whether the conversation completed the task using its MCP servers.",
+            "agentic",
+            "mcp",
+            {"turns", "mcp_metadata"},
+            sample_kind="conversation",
+        ),
+        _adapter(
+            "deepeval.mcp_use",
+            "MCP Use",
+            "Whether MCP tools, resources, and prompts were used correctly.",
+            "agentic",
+            "mcp",
+            {"turns", "mcp_metadata", "mcp_events"},
+            sample_kind="conversation",
         ),
     ]
 }

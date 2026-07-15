@@ -1,4 +1,5 @@
 from importlib.metadata import version
+from importlib.util import find_spec
 from pathlib import Path
 
 
@@ -55,3 +56,42 @@ def test_deepeval_agent_trace_private_contract_is_available():
     test_case = LLMTestCase(input="task", actual_output="done")
 
     assert hasattr(test_case, "_trace_dict")
+
+
+def test_deepeval_conversational_contract_is_available():
+    import inspect
+
+    from deepeval.metrics import (
+        ConversationCompletenessMetric,
+        MCPTaskCompletionMetric,
+        MCPUseMetric,
+        RoleAdherenceMetric,
+        TurnRelevancyMetric,
+    )
+    from deepeval.test_case import ConversationalTestCase, Turn
+    from deepeval.test_case.mcp import (
+        MCPPromptCall,
+        MCPResourceCall,
+        MCPServer,
+        MCPToolCall,
+    )
+
+    for metric_class in (ConversationCompletenessMetric, TurnRelevancyMetric):
+        assert "window_size" in inspect.signature(
+            metric_class.__init__
+        ).parameters
+    case_fields = set(ConversationalTestCase.model_fields)
+    assert {"turns", "chatbot_role", "context", "mcp_servers"} <= case_fields
+    assert set(Turn.model_fields) >= {"role", "content"}
+    assert set(MCPToolCall.__annotations__) == {"name", "args", "result"}
+    assert all(
+        (
+            MCPTaskCompletionMetric,
+            MCPUseMetric,
+            RoleAdherenceMetric,
+            MCPServer,
+            MCPResourceCall,
+            MCPPromptCall,
+        )
+    )
+    assert find_spec("mcp") is None

@@ -7,7 +7,18 @@ from app.evals.judges import (
     deterministic_deepeval_llm,
     usage_snapshot,
 )
-from app.evals.samples import AgentTraceEvent, AgentTraceSample, EvaluationSample, ToolCall
+from app.evals.samples import (
+    AgentTraceEvent,
+    AgentTraceSample,
+    ConversationSample,
+    EvaluationSample,
+    ToolCall,
+    conversation_actual_preview,
+    conversation_input_preview,
+)
+
+
+_MCP_SINGLE_TURN_METRICS = {"mcp_use"}
 
 
 def _make_metric(name: str, judge: JudgeConfig | None, config: dict | None):
@@ -16,15 +27,20 @@ def _make_metric(name: str, judge: JudgeConfig | None, config: dict | None):
         AnswerRelevancyMetric,
         BiasMetric,
         ContextualRelevancyMetric,
+        ConversationCompletenessMetric,
         FaithfulnessMetric,
         GEval,
         HallucinationMetric,
         JsonCorrectnessMetric,
+        MCPTaskCompletionMetric,
+        MCPUseMetric,
         PIILeakageMetric,
         PromptAlignmentMetric,
+        RoleAdherenceMetric,
         ToxicityMetric,
         TaskCompletionMetric,
         ToolCorrectnessMetric,
+        TurnRelevancyMetric,
     )
     from deepeval.test_case import SingleTurnParams, ToolCallParams
 
@@ -107,6 +123,17 @@ def _make_metric(name: str, judge: JudgeConfig | None, config: dict | None):
             async_mode=False,
             strict_mode=options.get("strict_mode", False),
         ),
+        "conversation_completeness": lambda: ConversationCompletenessMetric(
+            window_size=options.get("window_size", 3),
+            **reasoned,
+        ),
+        "turn_relevancy": lambda: TurnRelevancyMetric(
+            window_size=options.get("window_size", 10),
+            **reasoned,
+        ),
+        "role_adherence": lambda: RoleAdherenceMetric(**reasoned),
+        "mcp_task_completion": lambda: MCPTaskCompletionMetric(**reasoned),
+        "mcp_use": lambda: MCPUseMetric(**reasoned),
     }
     try:
         return metrics[name]()
@@ -145,8 +172,110 @@ def _trace_dict(sample: AgentTraceSample) -> dict[str, Any]:
     }
 
 
+def _deepeval_turns(sample: ConversationSample):
+    from deepeval.test_case import Turn
+
+    turns = [
+        Turn(role=turn.role, content=turn.content)
+        for turn in sample.turns
+        if turn.role in ("user", "assistant")
+    ]
+    if not any(turn.role == "user" for turn in turns) or not any(
+        turn.role == "assistant" for turn in turns
+    ):
+        raise ValueError(
+            "Conversation needs at least one user and one assistant turn"
+        )
+    return turns
+
+
+def _mcp_servers(sample: ConversationSample):
+    from deepeval.test_case.mcp import MCPServer
+
+    return [
+        MCPServer(server_name=server.server_name, transport=server.transport)
+        for server in sample.mcp_metadata.servers
+    ] or None
+
+
+def _conversational_test_case(sample: ConversationSample):
+    from deepeval.test_case import ConversationalTestCase
+
+    return ConversationalTestCase(
+        turns=_deepeval_turns(sample),
+        chatbot_role=sample.chatbot_role,
+        context=sample.conversation_context or None,
+        mcp_servers=_mcp_servers(sample),
+        metadata=sample.metadata,
+        tags=sample.tags,
+    )
+
+
+def _mcp_llm_test_case(sample: ConversationSample):
+    from deepeval.test_case import LLMTestCase
+    from deepeval.test_case.mcp import (
+        MCPPromptCall,
+        MCPResourceCall,
+        MCPToolCall,
+    )
+
+    _deepeval_turns(sample)
+    tools, resources, prompts = [], [], []
+    for event in sample.mcp_events:
+        payload = event.payload
+        if event.type == "tool":
+            tools.append(
+                MCPToolCall(
+                    name=event.name or "",
+                    args=payload.get("args", {}),
+                    result=payload.get("result"),
+                )
+            )
+        elif event.type == "resource":
+            resources.append(
+                MCPResourceCall(
+                    uri=payload["uri"], result=payload.get("result")
+                )
+            )
+        elif event.type == "prompt":
+            prompts.append(
+                MCPPromptCall(
+                    name=event.name or "", result=payload.get("result")
+                )
+            )
+        else:
+            raise ValueError(f"Unsupported MCP event type: {event.type}")
+    test_case = LLMTestCase(
+        input=conversation_input_preview(sample),
+        actual_output=conversation_actual_preview(sample),
+        mcp_servers=_mcp_servers(sample),
+        metadata=sample.metadata,
+        tags=sample.tags,
+    )
+    # DeepEval 4.1.0 imports the optional `mcp` package when these fields are
+    # passed to LLMTestCase.__init__. Our typed models are sufficient for the
+    # MCPUseMetric, so assign them after the base test case is validated.
+    test_case.mcp_tools_called = tools or None
+    test_case.mcp_resources_called = resources or None
+    test_case.mcp_prompts_called = prompts or None
+    return test_case
+
+
 def _test_case(row: EvaluationSample, name: str):
     from deepeval.test_case import LLMTestCase
+
+    if isinstance(row, ConversationSample):
+        if name == "role_adherence" and not row.chatbot_role:
+            raise ValueError("Role adherence needs a chatbot role")
+        if name in {"mcp_task_completion", "mcp_use"} and not (
+            row.mcp_metadata.servers
+        ):
+            raise ValueError("MCP metadata needs at least one server")
+        if name == "mcp_use" and not row.mcp_events:
+            raise ValueError("MCP use needs at least one event")
+        if name in _MCP_SINGLE_TURN_METRICS:
+            return _mcp_llm_test_case(row)
+        return _conversational_test_case(row)
 
     if isinstance(row, AgentTraceSample):
         test_case = LLMTestCase(

@@ -371,3 +371,231 @@ def test_deepeval_agentic_scoring_converts_tools_and_trace(monkeypatch, metric_n
     assert test_case._trace_dict["children"][0]["children"][0]["type"] == "tool"
     assert result.score == 0.9
     assert result.passed is True
+
+
+def _conversation_sample(**extra):
+    from app.evals.samples import ConversationSample
+
+    return ConversationSample.model_validate(
+        {
+            "kind": "conversation",
+            "turns": [
+                {"role": "system", "content": "be brief"},
+                {"role": "user", "content": "open a.txt"},
+                {"role": "tool", "content": "raw bytes"},
+                {"role": "assistant", "content": "done"},
+            ],
+            **extra,
+        }
+    )
+
+
+def test_deepeval_conversation_constructors_map_validated_config(monkeypatch):
+    from deepeval import metrics
+
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    captured = {}
+
+    def factory(name):
+        def build(**kwargs):
+            captured[name] = kwargs
+            return object()
+
+        return build
+
+    names = (
+        "ConversationCompletenessMetric",
+        "TurnRelevancyMetric",
+        "RoleAdherenceMetric",
+        "MCPTaskCompletionMetric",
+        "MCPUseMetric",
+    )
+    for name in names:
+        monkeypatch.setattr(metrics, name, factory(name))
+    monkeypatch.setattr(deepeval, "deepeval_llm", lambda judge: "judge")
+    judge = JudgeConfig("openai", "model", "key")
+
+    deepeval._make_metric(
+        "conversation_completeness",
+        judge,
+        {"threshold": 0.7, "window_size": 5},
+    )
+    deepeval._make_metric(
+        "turn_relevancy", judge, {"threshold": 0.6, "window_size": 8}
+    )
+    for name in ("role_adherence", "mcp_task_completion", "mcp_use"):
+        deepeval._make_metric(name, judge, {"threshold": 0.55})
+
+    assert captured["ConversationCompletenessMetric"]["window_size"] == 5
+    assert captured["ConversationCompletenessMetric"]["threshold"] == 0.7
+    assert captured["TurnRelevancyMetric"]["window_size"] == 8
+    assert captured["RoleAdherenceMetric"]["model"] == "judge"
+    assert captured["MCPTaskCompletionMetric"]["async_mode"] is False
+    assert captured["MCPUseMetric"]["threshold"] == 0.55
+
+
+def _capture_conversation_case(monkeypatch, metric_name, sample):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    captured = {}
+
+    class Metric:
+        reason = "ok"
+        model = None
+
+        def measure(self, test_case, **kwargs):
+            captured["test_case"] = test_case
+            return 0.9
+
+        def is_successful(self):
+            return True
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: Metric())
+    deepeval.score_metric(
+        metric_name,
+        sample,
+        JudgeConfig("openai", "model", "key"),
+        {},
+    )
+    return captured["test_case"]
+
+
+def test_conversational_test_case_filters_roles(monkeypatch):
+    test_case = _capture_conversation_case(
+        monkeypatch, "conversation_completeness", _conversation_sample()
+    )
+
+    assert [turn.role for turn in test_case.turns] == ["user", "assistant"]
+
+
+def test_role_adherence_receives_chatbot_role(monkeypatch):
+    test_case = _capture_conversation_case(
+        monkeypatch,
+        "role_adherence",
+        _conversation_sample(chatbot_role="support agent"),
+    )
+
+    assert test_case.chatbot_role == "support agent"
+
+
+def test_mcp_task_completion_receives_servers(monkeypatch):
+    test_case = _capture_conversation_case(
+        monkeypatch,
+        "mcp_task_completion",
+        _conversation_sample(
+            mcp_metadata={
+                "servers": [{"server_name": "files", "transport": "stdio"}]
+            }
+        ),
+    )
+
+    assert test_case.mcp_servers[0].server_name == "files"
+
+
+def test_mcp_use_builds_llm_test_case_from_turns_and_events(monkeypatch):
+    test_case = _capture_conversation_case(
+        monkeypatch,
+        "mcp_use",
+        _conversation_sample(
+            mcp_metadata={
+                "servers": [{"server_name": "files", "transport": "stdio"}]
+            },
+            mcp_events=[
+                {
+                    "type": "tool",
+                    "name": "read",
+                    "payload": {
+                        "args": {"path": "a.txt"},
+                        "result": "data",
+                    },
+                },
+                {
+                    "type": "resource",
+                    "name": None,
+                    "payload": {"uri": "file://a.txt", "result": "data"},
+                },
+                {
+                    "type": "prompt",
+                    "name": "summarize",
+                    "payload": {"result": "short"},
+                },
+            ],
+        ),
+    )
+
+    assert test_case.input == "open a.txt"
+    assert test_case.actual_output == "done"
+    assert test_case.mcp_tools_called[0].name == "read"
+    assert test_case.mcp_tools_called[0].args == {"path": "a.txt"}
+    assert str(test_case.mcp_resources_called[0].uri).startswith("file://a.txt")
+    assert test_case.mcp_prompts_called[0].name == "summarize"
+
+
+def test_conversation_without_user_or_assistant_turn_fails_row(monkeypatch):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+    from app.evals.samples import ConversationSample
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: object())
+    only_system = ConversationSample.model_validate(
+        {
+            "kind": "conversation",
+            "turns": [{"role": "system", "content": "be brief"}],
+        }
+    )
+    with pytest.raises(ValueError, match="user and one assistant"):
+        deepeval.score_metric(
+            "conversation_completeness",
+            only_system,
+            JudgeConfig("openai", "model", "key"),
+            {},
+        )
+
+
+def test_conversation_metrics_require_judge():
+    from app.evals import deepeval
+
+    with pytest.raises(ValueError, match="requires a judge"):
+        deepeval.score_metric("turn_relevancy", _conversation_sample(), None, {})
+
+
+def test_role_adherence_requires_a_nonempty_role(monkeypatch):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: object())
+    with pytest.raises(ValueError, match="chatbot role"):
+        deepeval.score_metric(
+            "role_adherence",
+            _conversation_sample(),
+            JudgeConfig("openai", "model", "key"),
+            {},
+        )
+
+
+@pytest.mark.parametrize(
+    ("metric_name", "extra", "message"),
+    [
+        ("mcp_task_completion", {}, "MCP metadata needs at least one server"),
+        (
+            "mcp_use",
+            {"mcp_metadata": {"servers": [{"server_name": "files"}]}},
+            "MCP use needs at least one event",
+        ),
+    ],
+)
+def test_empty_mcp_inputs_fail_the_row(monkeypatch, metric_name, extra, message):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: object())
+    with pytest.raises(ValueError, match=message):
+        deepeval.score_metric(
+            metric_name,
+            _conversation_sample(**extra),
+            JudgeConfig("openai", "model", "key"),
+            {},
+        )

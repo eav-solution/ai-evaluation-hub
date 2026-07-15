@@ -803,4 +803,164 @@ METRIC_INFO: dict[str, MetricInfo] = {
         ),
         "required_data": ["input", "actual_output", "tools_called", "expected_tools"],
     },
+    "deepeval.conversation_completeness": {
+        "meaning": (
+            "Measures whether the full conversation resolves the user's stated "
+            "intentions and follow-up needs."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Identify the user's intentions across the conversation.",
+            "Check whether later assistant turns satisfy each intention.",
+            "Aggregate the completion judgments into a score from zero to one.",
+        ],
+        "formula": "Completeness = fulfilled conversation intentions / total intentions",
+        "examples": [
+            _example(
+                "Request resolved",
+                [("Turns", "User asks to change an address; assistant confirms it")],
+                [("pass", "The requested change is completed and confirmed.")],
+                "All intentions fulfilled -> high score",
+            ),
+            _example(
+                "Follow-up omitted",
+                [("Turns", "User asks for status and delivery date; only status is answered")],
+                [("fail", "The delivery-date intention remains unresolved.")],
+                "One intention omitted -> lower score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Dialogue", "Track unresolved user intentions between turns."),
+            ("Completion", "Confirm every requested outcome before ending the chat."),
+        ),
+        "required_data": ["turns"],
+    },
+    "deepeval.turn_relevancy": {
+        "meaning": (
+            "Measures whether assistant turns remain relevant to the recent "
+            "conversation window."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Build the configured window of adjacent conversation turns.",
+            "Judge each assistant turn against the active user intent.",
+            "Average the per-turn relevancy judgments.",
+        ],
+        "formula": "Turn relevancy = mean relevant assistant-turn score",
+        "examples": [
+            _example(
+                "Relevant follow-up",
+                [("Turns", "User asks about shipping; assistant gives a delivery date")],
+                [("pass", "The response directly continues the shipping topic.")],
+                "Relevant response -> high score",
+            ),
+            _example(
+                "Topic drift",
+                [("Turns", "User asks about shipping; assistant discusses product colors")],
+                [("fail", "The response does not address the active intent.")],
+                "Irrelevant response -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Context", "Keep recent user intent explicit in the dialogue state."),
+            ("Generation", "Answer the active question before offering related details."),
+        ),
+        "required_data": ["turns"],
+    },
+    "deepeval.role_adherence": {
+        "meaning": (
+            "Measures whether the assistant behaves consistently with its declared "
+            "chatbot role throughout the conversation."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Read the declared chatbot role and its implied boundaries.",
+            "Check assistant turns for behavior outside those boundaries.",
+            "Combine the adherence judgments into a score from zero to one.",
+        ],
+        "formula": "Role adherence = adhering assistant turns / evaluated turns",
+        "examples": [
+            _example(
+                "Support role maintained",
+                [("Role", "Customer support agent"), ("Turns", "Troubleshooting steps")],
+                [("pass", "The assistant stays within customer support duties.")],
+                "Role maintained -> high score",
+            ),
+            _example(
+                "Role boundary crossed",
+                [("Role", "Travel concierge"), ("Turns", "Assistant gives medical advice")],
+                [("fail", "The assistant acts outside the declared role.")],
+                "Role violated -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Role", "Describe the role's responsibilities and exclusions explicitly."),
+            ("Safety", "Route out-of-role requests to an appropriate fallback."),
+        ),
+        "required_data": ["turns", "chatbot_role"],
+    },
+    "deepeval.mcp_task_completion": {
+        "meaning": (
+            "Measures whether a conversation completes its task using the declared "
+            "MCP servers."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Identify the task requested in the conversation.",
+            "Inspect the MCP servers available to the assistant.",
+            "Judge whether the final conversation outcome completes the task.",
+        ],
+        "formula": "MCP task completion = judge-assessed completion score from 0 to 1",
+        "examples": [
+            _example(
+                "MCP task completed",
+                [("Turns", "User requests a file; assistant returns its contents"), ("Server", "files")],
+                [("pass", "The requested outcome is delivered through the MCP server.")],
+                "Completed task -> high score",
+            ),
+            _example(
+                "MCP task incomplete",
+                [("Turns", "User requests a booking; assistant only lists options"), ("Server", "booking")],
+                [("fail", "The requested booking is not completed.")],
+                "Incomplete task -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Planning", "Map each task outcome to a capable MCP server."),
+            ("Verification", "Check the server result before reporting completion."),
+        ),
+        "required_data": ["turns", "mcp_metadata"],
+    },
+    "deepeval.mcp_use": {
+        "meaning": (
+            "Measures whether MCP tools, resources, and prompts were selected and "
+            "used appropriately for the conversation."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Read the user request and declared MCP servers.",
+            "Inspect the recorded MCP tool, resource, and prompt events.",
+            "Judge whether those calls appropriately support the final response.",
+        ],
+        "formula": "MCP use = judge-assessed MCP call quality from 0 to 1",
+        "examples": [
+            _example(
+                "Appropriate MCP call",
+                [("Request", "Read a.txt"), ("Event", "files.read(path=a.txt)")],
+                [("pass", "The selected call directly supports the request.")],
+                "Correct MCP use -> high score",
+            ),
+            _example(
+                "Unrelated MCP call",
+                [("Request", "Read a.txt"), ("Event", "calendar.create_event")],
+                [("fail", "The call is unrelated to the requested file operation.")],
+                "Incorrect MCP use -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Selection", "Describe server capabilities and call boundaries clearly."),
+            ("Arguments", "Validate MCP event arguments against the active request."),
+        ),
+        "required_data": ["turns", "mcp_metadata", "mcp_events"],
+    },
 }

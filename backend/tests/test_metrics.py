@@ -17,6 +17,11 @@ EXPECTED_DIRECTIONS = {
     "deepeval.task_completion": "higher_is_better",
     "deepeval.agent_loop_detection": "higher_is_better",
     "deepeval.tool_correctness": "higher_is_better",
+    "deepeval.conversation_completeness": "higher_is_better",
+    "deepeval.turn_relevancy": "higher_is_better",
+    "deepeval.role_adherence": "higher_is_better",
+    "deepeval.mcp_task_completion": "higher_is_better",
+    "deepeval.mcp_use": "higher_is_better",
 }
 
 
