@@ -1,6 +1,6 @@
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 NORMALIZER_REVISION = "1"
 
@@ -35,6 +35,7 @@ class AgentTraceEvent(StrictModel):
     input: Any = None
     output: Any = None
     details: dict[str, Any] = Field(default_factory=dict)
+    children: list["AgentTraceEvent"] = Field(default_factory=list)
 
 
 class ConversationTurn(StrictModel):
@@ -79,9 +80,17 @@ class AgentTraceSample(SampleMetadata):
     kind: Literal["agent_trace"] = "agent_trace"
     input: str
     actual_output: str
-    agent_trace: list[AgentTraceEvent]
+    agent_trace: list[AgentTraceEvent] = Field(min_length=1)
     tools_called: list[ToolCall] = Field(default_factory=list)
-    expected_tools: list[str] = Field(default_factory=list)
+    expected_tools: list[ToolCall] = Field(default_factory=list)
+
+    @field_validator("expected_tools", mode="before")
+    @classmethod
+    def tool_name_shorthand(cls, value):
+        return [
+            {"name": item} if isinstance(item, str) else item
+            for item in (value or [])
+        ]
 
 
 class ConversationSample(SampleMetadata):

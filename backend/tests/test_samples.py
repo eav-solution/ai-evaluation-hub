@@ -63,3 +63,46 @@ def test_single_turn_keeps_legacy_context_accessor():
     assert sample.contexts == ["retrieved"]
     assert sample.normalizer_revision == "1"
     assert EvalRow is SingleTurnSample
+
+
+def test_agent_trace_sample_accepts_nested_events_and_tool_name_shorthand():
+    from app.evals.samples import AgentTraceSample
+
+    sample = AgentTraceSample.model_validate(
+        {
+            "kind": "agent_trace",
+            "input": "Book a flight",
+            "actual_output": "Booked",
+            "agent_trace": [
+                {
+                    "type": "agent",
+                    "name": "planner",
+                    "children": [{"type": "tool", "name": "search"}],
+                }
+            ],
+            "expected_tools": ["search", {"name": "book", "arguments": {}}],
+        }
+    )
+
+    assert sample.agent_trace[0].children[0].name == "search"
+    assert [tool.name for tool in sample.expected_tools] == ["search", "book"]
+
+
+def test_agent_trace_sample_rejects_empty_trace():
+    from app.evals.samples import AgentTraceSample
+
+    with pytest.raises(ValidationError):
+        AgentTraceSample(input="q", actual_output="a", agent_trace=[])
+
+
+def test_agent_trace_sample_rejects_unknown_nested_fields():
+    from app.evals.samples import AgentTraceSample
+
+    with pytest.raises(ValidationError):
+        AgentTraceSample.model_validate(
+            {
+                "input": "q",
+                "actual_output": "a",
+                "agent_trace": [{"type": "tool", "unknown": True}],
+            }
+        )
