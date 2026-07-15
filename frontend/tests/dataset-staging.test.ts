@@ -2,6 +2,7 @@ import {describe, expect, it} from "vitest";
 
 import {
   autoMapColumns,
+  collectFilesFromDataTransfer,
   countRecords,
   detectFormat,
   isSupportedFile,
@@ -79,5 +80,74 @@ describe("autoMapColumns", () => {
 
   it("returns an empty mapping when nothing matches", () => {
     expect(autoMapColumns(["question", "answer"])).toEqual({});
+  });
+});
+
+type FakeEntry = {
+  isFile: boolean;
+  isDirectory: boolean;
+  file?: (resolve: (file: File) => void, reject?: (error: unknown) => void) => void;
+  createReader?: () => {
+    readEntries: (
+      resolve: (entries: FakeEntry[]) => void,
+      reject?: (error: unknown) => void,
+    ) => void;
+  };
+};
+
+function fakeFileEntry(name: string): FakeEntry {
+  return {
+    isFile: true,
+    isDirectory: false,
+    file: (resolve) => resolve(new File(["a,b\n1,2\n"], name, {type: "text/csv"})),
+  };
+}
+
+function fakeDirectoryEntry(children: FakeEntry[], batchSize = 2): FakeEntry {
+  let cursor = 0;
+  return {
+    isFile: false,
+    isDirectory: true,
+    createReader: () => ({
+      readEntries: (resolve) => {
+        const batch = children.slice(cursor, cursor + batchSize);
+        cursor += batch.length;
+        resolve(batch);
+      },
+    }),
+  };
+}
+
+function fakeDataTransferItems(entries: (FakeEntry | null)[], files: (File | null)[] = []) {
+  const items = entries.map((entry, index) => ({
+    webkitGetAsEntry: () => entry,
+    getAsFile: () => files[index] ?? null,
+  }));
+  return items as unknown as DataTransferItemList;
+}
+
+describe("collectFilesFromDataTransfer", () => {
+  it("collects plain file drops", async () => {
+    const items = fakeDataTransferItems([fakeFileEntry("a.csv"), fakeFileEntry("b.jsonl")]);
+    const files = await collectFilesFromDataTransfer(items);
+    expect(files.map((file) => file.name)).toEqual(["a.csv", "b.jsonl"]);
+  });
+
+  it("walks directories recursively across readEntries batches", async () => {
+    const nested = fakeDirectoryEntry([fakeFileEntry("deep.csv")]);
+    const root = fakeDirectoryEntry(
+      [fakeFileEntry("one.csv"), fakeFileEntry("two.csv"), fakeFileEntry("three.csv"), nested],
+      2,
+    );
+    const files = await collectFilesFromDataTransfer(fakeDataTransferItems([root]));
+    expect(files.map((file) => file.name).sort()).toEqual(
+      ["deep.csv", "one.csv", "three.csv", "two.csv"],
+    );
+  });
+
+  it("falls back to getAsFile when the entry API is unavailable", async () => {
+    const fallback = new File(["x"], "fallback.csv", {type: "text/csv"});
+    const files = await collectFilesFromDataTransfer(fakeDataTransferItems([null], [fallback]));
+    expect(files.map((file) => file.name)).toEqual(["fallback.csv"]);
   });
 });
