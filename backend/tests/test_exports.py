@@ -50,8 +50,18 @@ def _completed_run(db):
         },
         latency_ms=42,
         details={
-            "sample": {"context": ["Trusted <fact>"]},
-            "trace": [{"type": "tool", "name": "search"}],
+            "sample": {
+                "kind": "agent_trace",
+                "context": ["Trusted <fact>"],
+                "agent_trace": [
+                    {"type": "tool", "name": "search", "output": "found"}
+                ],
+                "tools_called": [
+                    {"name": "search", "arguments": {"query": "policy"}}
+                ],
+                "expected_tools": [{"name": "search"}],
+                "metadata": {"session_id": "session-1"},
+            },
             "note": "café",
         },
         usage={"input_tokens": 12, "output_tokens": 4},
@@ -85,6 +95,15 @@ def test_export_serializers_preserve_nested_json_and_flatten_csv(
     assert payload["results"][0]["details"]["sample"]["context"] == [
         "Trusted <fact>"
     ]
+    assert payload["results"][0]["details"]["sample"]["agent_trace"][0][
+        "name"
+    ] == "search"
+    assert payload["results"][0]["details"]["sample"]["tools_called"][0][
+        "arguments"
+    ] == {"query": "policy"}
+    assert payload["results"][0]["details"]["sample"]["expected_tools"] == [
+        {"name": "search"}
+    ]
     assert payload["results"][0]["usage"] == {
         "input_tokens": 12,
         "output_tokens": 4,
@@ -97,8 +116,11 @@ def test_export_serializers_preserve_nested_json_and_flatten_csv(
     assert rows[0]["deepeval.bias.score"] == "0.8"
     assert rows[0]["deepeval.bias.passed"] == "true"
     assert rows[0]["contexts"] == '["Policy <one>"]'
-    assert '"sample": {"context": ["Trusted <fact>"]}' in rows[0]["details"]
-    assert '"trace": [{"type": "tool", "name": "search"}]' in rows[0]["details"]
+    assert '"agent_trace": [{"type": "tool", "name": "search"' in rows[0][
+        "details"
+    ]
+    assert '"tools_called": [{"name": "search"' in rows[0]["details"]
+    assert '"expected_tools": [{"name": "search"}]' in rows[0]["details"]
     assert '"note": "café"' in rows[0]["details"]
     assert rows[0]["usage"] == '{"input_tokens": 12, "output_tokens": 4}'
     assert rows[0]["estimated_cost"] == "0.0012"
@@ -120,6 +142,11 @@ def test_html_report_is_self_contained_and_escaped(client, auth_headers, db):
     assert "Result metadata" in html
     assert "Trusted context" in html
     assert "Trusted &lt;fact&gt;" in html
+    assert "Agent trace" in html
+    assert "Tools called" in html
+    assert "Expected tools" in html
+    assert html.count("search") == 3
+    assert "session_id" in html
     assert "Usage" in html
     assert "input_tokens" in html
     assert "Estimated cost" in html
@@ -143,7 +170,9 @@ def test_export_download_routes(client, auth_headers, db):
     assert json_response.json()["run"]["id"] == run.id
     result_response = client.get(f"{base}/results", headers=auth_headers)
     assert result_response.status_code == 200
-    assert result_response.json()[0]["details"]["trace"][0]["name"] == "search"
+    assert result_response.json()[0]["details"]["sample"]["agent_trace"][0][
+        "name"
+    ] == "search"
     assert result_response.json()[0]["usage"]["input_tokens"] == 12
     assert result_response.json()[0]["estimated_cost"] == 0.0012
 

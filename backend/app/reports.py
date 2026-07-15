@@ -21,6 +21,51 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False) if value is not None else None
 
 
+def _result_detail_view(details: dict | None) -> dict:
+    sample = details.get("sample") if isinstance(details, dict) else None
+    if not isinstance(sample, dict):
+        return {
+            "trusted_context": None,
+            "agent_trace": None,
+            "tools_called": None,
+            "expected_tools": None,
+            "other_details": details or None,
+        }
+
+    trusted_context = sample.get("context")
+    if sample.get("kind") != "agent_trace":
+        return {
+            "trusted_context": trusted_context,
+            "agent_trace": None,
+            "tools_called": None,
+            "expected_tools": None,
+            "other_details": details,
+        }
+
+    other_details = dict(details)
+    typed_fields = {
+        "kind",
+        "context",
+        "agent_trace",
+        "tools_called",
+        "expected_tools",
+    }
+    other_sample = {
+        key: value for key, value in sample.items() if key not in typed_fields
+    }
+    if other_sample:
+        other_details["sample"] = other_sample
+    else:
+        other_details.pop("sample", None)
+    return {
+        "trusted_context": trusted_context,
+        "agent_trace": sample.get("agent_trace"),
+        "tools_called": sample.get("tools_called"),
+        "expected_tools": sample.get("expected_tools"),
+        "other_details": other_details or None,
+    }
+
+
 def build_payload(
     run: Run,
     summaries: list[RunSummary],
@@ -137,6 +182,9 @@ def render_html(
         run=run,
         summaries=summaries,
         results=results,
+        detail_views={
+            item.id: _result_detail_view(item.details) for item in results
+        },
         metric_keys=metric_keys,
         chart=chart,
     )

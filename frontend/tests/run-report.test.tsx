@@ -248,4 +248,44 @@ describe("RunReport metric information", () => {
     expect(within(drilldown as HTMLElement).getByText("Estimated cost")).toBeInTheDocument();
     expect(within(drilldown as HTMLElement).getByText("$0.001200")).toBeInTheDocument();
   });
+
+  it("shows typed agent trace and tool sections without duplicating them in Details", async () => {
+    const agentResult: RunResult = {
+      ...result(0, "book a flight", 1),
+      details: {
+        sample: {
+          kind: "agent_trace",
+          agent_trace: [{type: "tool", name: "book_flight", output: "confirmed"}],
+          tools_called: [{name: "book_flight", arguments: {flight: "VN1"}}],
+          expected_tools: [{name: "book_flight"}],
+          metadata: {session_id: "session-1"},
+        },
+        provider: {request_id: "req-agent-1"},
+      },
+    };
+    mockReportApi(Promise.resolve([metric]), run, [agentResult]);
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    const summary = screen.getByText("Result metadata");
+    fireEvent.click(summary);
+    const drilldown = summary.closest("details") as HTMLElement;
+    expect(within(drilldown).getByText("Agent trace")).toBeInTheDocument();
+    expect(within(drilldown).getByText("Tools called")).toBeInTheDocument();
+    expect(within(drilldown).getByText("Expected tools")).toBeInTheDocument();
+    expect(within(drilldown).getByText("Details")).toBeInTheDocument();
+    expect(within(drilldown).getAllByText(/book_flight/)).toHaveLength(3);
+    expect(within(drilldown).getByText(/session_id/)).toBeInTheDocument();
+    expect(within(drilldown).getByText(/req-agent-1/)).toBeInTheDocument();
+  });
+
+  it("does not show an empty metadata drill-down for historical rows", async () => {
+    mockReportApi(Promise.resolve([metric]), run, [
+      {...result(0, "legacy", 0.8), details: {}},
+    ]);
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    expect(screen.queryByText("Result metadata")).not.toBeInTheDocument();
+  });
 });

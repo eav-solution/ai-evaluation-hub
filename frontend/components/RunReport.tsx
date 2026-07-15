@@ -24,6 +24,53 @@ export function metricLabel(metricsByKey: Map<string, Metric>, key: string): str
   return metricsByKey.get(key)?.display_name ?? key;
 }
 
+function resultDetailView(details: Record<string, unknown> | null) {
+  const sample = details?.sample;
+  if (!sample || typeof sample !== "object" || Array.isArray(sample)) {
+    return {
+      trustedContext: null,
+      agentTrace: null,
+      toolsCalled: null,
+      expectedTools: null,
+      otherDetails: details && Object.keys(details).length ? details : null,
+    };
+  }
+
+  const fields = sample as Record<string, unknown>;
+  const trustedContext = fields.context ?? null;
+  if (fields.kind !== "agent_trace") {
+    return {
+      trustedContext,
+      agentTrace: null,
+      toolsCalled: null,
+      expectedTools: null,
+      otherDetails: details,
+    };
+  }
+
+  const otherDetails = {...details};
+  const otherSample = {...fields};
+  for (const key of [
+    "kind",
+    "context",
+    "agent_trace",
+    "tools_called",
+    "expected_tools",
+  ]) {
+    delete otherSample[key];
+  }
+  if (Object.keys(otherSample).length) otherDetails.sample = otherSample;
+  else delete otherDetails.sample;
+
+  return {
+    trustedContext,
+    agentTrace: fields.agent_trace ?? null,
+    toolsCalled: fields.tools_called ?? null,
+    expectedTools: fields.expected_tools ?? null,
+    otherDetails: Object.keys(otherDetails).length ? otherDetails : null,
+  };
+}
+
 export function RunReport({
   workspaceId,
   runId,
@@ -270,13 +317,13 @@ export function RunReport({
             <thead><tr><th>#</th><th>Input / output</th>{metricKeys.map((key) => <th key={key}>{key}</th>)}<th>Latency</th></tr></thead>
             <tbody>
               {rows.map((row) => {
-                const sample = row.details?.sample;
-                const trustedContext =
-                  sample && typeof sample === "object" && "context" in sample
-                    ? (sample as {context?: unknown}).context
-                    : null;
+                const detailView = resultDetailView(row.details);
                 const hasMetadata =
-                  row.details !== null ||
+                  detailView.trustedContext !== null ||
+                  detailView.agentTrace !== null ||
+                  detailView.toolsCalled !== null ||
+                  detailView.expectedTools !== null ||
+                  detailView.otherDetails !== null ||
                   row.usage !== null ||
                   row.estimated_cost !== null;
                 return (
@@ -296,16 +343,34 @@ export function RunReport({
                         <details className="result-metadata">
                           <summary>Result metadata</summary>
                           <div className="result-metadata-body">
-                            {trustedContext !== null && trustedContext !== undefined && (
+                            {detailView.trustedContext !== null && (
                               <div>
                                 <strong>Trusted context</strong>
-                                <pre>{JSON.stringify(trustedContext, null, 2)}</pre>
+                                <pre>{JSON.stringify(detailView.trustedContext, null, 2)}</pre>
                               </div>
                             )}
-                            {row.details !== null && (
+                            {detailView.agentTrace !== null && (
+                              <div>
+                                <strong>Agent trace</strong>
+                                <pre>{JSON.stringify(detailView.agentTrace, null, 2)}</pre>
+                              </div>
+                            )}
+                            {detailView.toolsCalled !== null && (
+                              <div>
+                                <strong>Tools called</strong>
+                                <pre>{JSON.stringify(detailView.toolsCalled, null, 2)}</pre>
+                              </div>
+                            )}
+                            {detailView.expectedTools !== null && (
+                              <div>
+                                <strong>Expected tools</strong>
+                                <pre>{JSON.stringify(detailView.expectedTools, null, 2)}</pre>
+                              </div>
+                            )}
+                            {detailView.otherDetails !== null && (
                               <div>
                                 <strong>Details</strong>
-                                <pre>{JSON.stringify(row.details, null, 2)}</pre>
+                                <pre>{JSON.stringify(detailView.otherDetails, null, 2)}</pre>
                               </div>
                             )}
                             {row.usage !== null && (
