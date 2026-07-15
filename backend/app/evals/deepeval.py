@@ -16,6 +16,7 @@ from app.evals.samples import (
     ToolCall,
     conversation_actual_preview,
     conversation_input_preview,
+    multimodal_input_preview,
 )
 
 
@@ -278,7 +279,9 @@ def _mcp_llm_test_case(sample: ConversationSample):
     return test_case
 
 
-def _marker_text(blocks, created_ids: list[str]) -> str:
+def _marker_text(
+    blocks, created_ids: list[str], image_context: str | None = None
+) -> str:
     from deepeval.test_case import MLLMImage
 
     parts = []
@@ -293,12 +296,15 @@ def _marker_text(blocks, created_ids: list[str]) -> str:
             mimeType=block.mime_type,
         )
         created_ids.append(image._id)
+        if image_context:
+            parts.append(image_context)
         parts.append(str(image))
     return " ".join(parts)
 
 
 def _multimodal_test_case(
     sample: MultimodalSample,
+    name: str,
 ) -> tuple[Any, list[str]]:
     from deepeval.test_case import LLMTestCase
 
@@ -310,9 +316,18 @@ def _multimodal_test_case(
         )
     created_ids: list[str] = []
     try:
+        request = multimodal_input_preview(sample)
         test_case = LLMTestCase(
             input=_marker_text(sample.input, created_ids),
-            actual_output=_marker_text(sample.actual_output, created_ids),
+            actual_output=_marker_text(
+                sample.actual_output,
+                created_ids,
+                (
+                    f"User request: {request}"
+                    if name == "image_helpfulness" and request
+                    else None
+                ),
+            ),
             metadata=sample.metadata,
             tags=sample.tags,
         )
@@ -384,7 +399,7 @@ def score_metric(
     metric = _make_metric(name, judge, config)
     created_image_ids: list[str] = []
     if isinstance(row, MultimodalSample):
-        test_case, created_image_ids = _multimodal_test_case(row)
+        test_case, created_image_ids = _multimodal_test_case(row, name)
     else:
         test_case = _test_case(row, name)
     try:

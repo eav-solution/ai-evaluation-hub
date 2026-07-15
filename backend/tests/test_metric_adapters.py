@@ -658,8 +658,94 @@ def test_image_metric_receives_marker_test_case(monkeypatch):
     test_case = captured["measure_args"][0]
     assert test_case.multimodal is True
     assert "[DEEPEVAL:IMAGE:" in test_case.actual_output
+    assert "Describe the chart" not in test_case.actual_output
     assert captured["init_kwargs"]["max_context_size"] == 500
     assert "include_reason" not in captured["init_kwargs"]
+
+
+def test_image_helpfulness_judges_each_output_image_against_user_request(
+    monkeypatch,
+):
+    from deepeval.models.base_model import DeepEvalBaseLLM
+    from deepeval.test_case import MLLMImage
+    from deepeval.test_case.llm_test_case import _MLLM_IMAGE_REGISTRY
+
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+    from app.evals.samples import MultimodalSample
+
+    prompts: list[str] = []
+    judged_images: list[list[str | None]] = []
+
+    class CapturingJudge(DeepEvalBaseLLM):
+        def load_model(self):
+            return self
+
+        def generate(self, prompt, schema=None):
+            prompts.append(prompt)
+            judged_images.append(
+                [
+                    part.dataBase64
+                    for part in MLLMImage.parse_multimodal_string(prompt)
+                    if isinstance(part, MLLMImage)
+                ]
+            )
+            return schema(score=10, reasoning="captured")
+
+        async def a_generate(self, prompt, schema=None):
+            return self.generate(prompt, schema)
+
+        def get_model_name(self):
+            return "capture"
+
+        def supports_multimodal(self):
+            return True
+
+    monkeypatch.setattr(deepeval, "deepeval_llm", lambda judge: CapturingJudge())
+    sample = MultimodalSample.model_validate(
+        {
+            "kind": "multimodal",
+            "input": [
+                {"type": "text", "text": "  Which product sold best?  "},
+                {"type": "image", "asset_id": "input-image"},
+            ],
+            "actual_output": [
+                {"type": "text", "text": "first-prefix-" + "x" * 100},
+                {"type": "image", "asset_id": "output-image-1"},
+                {"type": "text", "text": "second-prefix-" + "y" * 100},
+                {"type": "image", "asset_id": "output-image-2"},
+            ],
+        }
+    )
+    image_blocks = [
+        block
+        for block in sample.input + sample.actual_output
+        if block.type == "image"
+    ]
+    for block, data in zip(
+        image_blocks,
+        ("aW5wdXQ=", "b3V0cHV0LTE=", "b3V0cHV0LTI="),
+        strict=True,
+    ):
+        block.data_base64 = data
+        block.mime_type = "image/png"
+    registry_before = set(_MLLM_IMAGE_REGISTRY)
+
+    deepeval.score_metric(
+        "image_helpfulness",
+        sample,
+        JudgeConfig("openai", "model", "key"),
+        {"max_context_size": 64},
+    )
+
+    assert len(prompts) == 2
+    assert all(
+        "User request: Which product sold best?" in prompt for prompt in prompts
+    )
+    assert "first-prefix" not in prompts[0]
+    assert "second-prefix" not in prompts[1]
+    assert judged_images == [["b3V0cHV0LTE="], ["b3V0cHV0LTI="]]
+    assert set(_MLLM_IMAGE_REGISTRY) == registry_before
 
 
 def test_image_metric_without_actual_output_image_fails_before_measure(monkeypatch):
