@@ -30,6 +30,7 @@ def build_payload(
         "run": {
             "id": run.id,
             "dataset_id": run.dataset_id,
+            "artifact_id": run.artifact_id,
             "name": run.name,
             "mode": run.mode,
             "status": run.status,

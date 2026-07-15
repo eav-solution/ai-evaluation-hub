@@ -7,6 +7,7 @@ from app.routers import (
     endpoint_test,
     exports,
     generation,
+    ingestions,
     metrics,
     model_benchmarks,
     provider_connections,
@@ -21,6 +22,7 @@ app.include_router(provider_connections.router)
 app.include_router(datasets.router)
 app.include_router(documents.router)
 app.include_router(generation.router)
+app.include_router(ingestions.router)
 app.include_router(endpoint_test.router)
 app.include_router(metrics.router)
 app.include_router(model_benchmarks.router)

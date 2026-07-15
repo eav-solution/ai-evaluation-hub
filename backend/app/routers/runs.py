@@ -101,6 +101,7 @@ def _run_out(row: Run, summaries: list[RunSummary] | None = None) -> dict:
     return {
         "id": row.id,
         "dataset_id": row.dataset_id,
+        "artifact_id": row.artifact_id,
         "name": row.name,
         "mode": row.mode,
         "metric_config": row.metric_config,

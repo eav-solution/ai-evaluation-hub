@@ -356,6 +356,7 @@ git commit -m "feat(runs): validate agentic input mappings"
 - Create: `backend/app/routers/ingestions.py`
 - Modify: `backend/app/main.py`
 - Modify: `backend/app/routers/runs.py`
+- Modify: `backend/app/evals/snapshots.py`
 - Modify: `backend/tests/test_models.py`
 - Create: `backend/tests/test_ingestions.py`
 
@@ -422,7 +423,7 @@ cd backend
 Expected: API/model tests pass and Alembic prints one `0003` head.
 
 ```bash
-git add backend/app/models.py backend/alembic/versions/0003_evaluation_artifacts.py backend/app/routers/ingestions.py backend/app/main.py backend/app/routers/runs.py backend/tests/test_models.py backend/tests/test_ingestions.py
+git add backend/app/models.py backend/alembic/versions/0003_evaluation_artifacts.py backend/app/routers/ingestions.py backend/app/main.py backend/app/routers/runs.py backend/app/evals/snapshots.py backend/tests/test_models.py backend/tests/test_ingestions.py
 git commit -m "feat(ingestion): persist idempotent trace artifacts"
 ```
 

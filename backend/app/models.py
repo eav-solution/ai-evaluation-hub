@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -105,14 +106,47 @@ class Dataset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
-class Run(Base):
-    __tablename__ = "runs"
+class EvaluationArtifact(Base):
+    __tablename__ = "evaluation_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "idempotency_key",
+            name="uq_evaluation_artifacts_workspace_idempotency_key",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     workspace_id: Mapped[str] = mapped_column(
         ForeignKey("workspaces.id"), index=True
     )
-    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.id"), index=True)
+    sample_kind: Mapped[str] = mapped_column(String(30))
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    storage_path: Mapped[str] = mapped_column(String(1024), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    __table_args__ = (
+        CheckConstraint(
+            "(dataset_id IS NOT NULL AND artifact_id IS NULL) OR "
+            "(dataset_id IS NULL AND artifact_id IS NOT NULL)",
+            name="ck_runs_exactly_one_source",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), index=True
+    )
+    dataset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("datasets.id"), index=True, nullable=True
+    )
+    artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("evaluation_artifacts.id"), index=True, unique=True, nullable=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     mode: Mapped[str] = mapped_column(String(20))
     metric_config: Mapped[dict] = mapped_column(JSONB)

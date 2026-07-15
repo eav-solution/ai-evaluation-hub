@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_create_user_workspace_membership(db):
     from app.models import Membership, User, Workspace
 
@@ -112,6 +115,75 @@ def test_run_result_extensions_are_nullable_and_roundtrip(db):
     assert legacy.details is None
     assert legacy.usage is None
     assert legacy.estimated_cost is None
+
+
+def test_artifact_backed_run_roundtrip(db):
+    from app.models import EvaluationArtifact, Run, User, Workspace
+
+    user = User(email="artifact-run@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Artifact run", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    artifact = EvaluationArtifact(
+        workspace_id=workspace.id,
+        sample_kind="agent_trace",
+        idempotency_key="trace-1",
+        request_hash="a" * 64,
+        storage_path=f"evaluation-artifacts/{workspace.id}/trace-1.json",
+    )
+    db.add(artifact)
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=None,
+        artifact_id=artifact.id,
+        name="Ingested trace",
+        mode="ingestion",
+        metric_config={"metrics": []},
+        judge_config={},
+    )
+    db.add(run)
+    db.commit()
+
+    saved = db.get(Run, run.id)
+    assert saved.dataset_id is None
+    assert saved.artifact_id == artifact.id
+
+
+def test_artifact_idempotency_key_is_unique_per_workspace(db):
+    import sqlalchemy as sa
+
+    from app.models import EvaluationArtifact, User, Workspace
+
+    user = User(email="artifact-unique@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Artifact unique", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    db.add_all(
+        [
+            EvaluationArtifact(
+                workspace_id=workspace.id,
+                sample_kind="agent_trace",
+                idempotency_key="same",
+                request_hash="a" * 64,
+                storage_path=f"evaluation-artifacts/{workspace.id}/one.json",
+            ),
+            EvaluationArtifact(
+                workspace_id=workspace.id,
+                sample_kind="agent_trace",
+                idempotency_key="same",
+                request_hash="b" * 64,
+                storage_path=f"evaluation-artifacts/{workspace.id}/two.json",
+            ),
+        ]
+    )
+
+    with pytest.raises(sa.exc.IntegrityError):
+        db.commit()
 
 
 def test_generation_models_roundtrip(db):

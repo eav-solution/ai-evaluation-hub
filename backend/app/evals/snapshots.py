@@ -70,3 +70,36 @@ def build_definition_snapshot(
             else None
         ),
     }
+
+
+def build_ingestion_definition_snapshot(
+    *,
+    artifact_id: str,
+    selected: list[tuple[MetricAdapter, dict[str, Any]]],
+    judge_connection: ProviderConnection | None,
+    judge_model: str | None,
+) -> dict[str, Any]:
+    resources: dict[str, dict[str, str]] = {}
+    if judge_connection is not None and judge_model is not None:
+        resources["judge"] = _connection_snapshot(judge_connection, judge_model)
+    return {
+        "artifact": {"id": artifact_id},
+        "libraries": {
+            "ragas": version("ragas"),
+            "deepeval": version("deepeval"),
+        },
+        "sample": {
+            "kind": "agent_trace",
+            "normalizer_revision": NORMALIZER_REVISION,
+        },
+        "metrics": [
+            {
+                "key": adapter.key,
+                "revision": adapter.revision,
+                "config": config,
+            }
+            for adapter, config in selected
+        ],
+        "resources": resources,
+        "endpoint": None,
+    }
