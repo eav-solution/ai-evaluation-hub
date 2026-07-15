@@ -106,3 +106,90 @@ def test_agent_trace_sample_rejects_unknown_nested_fields():
                 "agent_trace": [{"type": "tool", "unknown": True}],
             }
         )
+
+
+def test_conversation_sample_accepts_typed_mcp_metadata():
+    from app.evals.samples import ConversationSample
+
+    sample = ConversationSample.model_validate(
+        {
+            "kind": "conversation",
+            "turns": [
+                {"role": "user", "content": "Book a room"},
+                {"role": "assistant", "content": "Booked room 12"},
+            ],
+            "chatbot_role": "hotel concierge",
+            "mcp_metadata": {
+                "servers": [
+                    {"server_name": "booking", "transport": "stdio"}
+                ]
+            },
+            "mcp_events": [
+                {
+                    "type": "tool",
+                    "name": "reserve",
+                    "payload": {
+                        "args": {"room": 12},
+                        "result": "ok",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert sample.mcp_metadata.servers[0].server_name == "booking"
+    assert sample.mcp_events[0].payload["args"] == {"room": 12}
+
+
+def test_conversation_sample_defaults_are_backward_compatible():
+    from app.evals.samples import ConversationSample
+
+    sample = ConversationSample.model_validate(
+        {
+            "kind": "conversation",
+            "turns": [{"role": "user", "content": "hi"}],
+        }
+    )
+
+    assert sample.chatbot_role is None
+    assert sample.mcp_metadata.servers == []
+    assert sample.mcp_events == []
+
+
+def test_conversation_sample_rejects_empty_turns_and_unknown_metadata_keys():
+    from app.evals.samples import ConversationSample
+
+    with pytest.raises(ValidationError):
+        ConversationSample.model_validate({"kind": "conversation", "turns": []})
+    with pytest.raises(ValidationError):
+        ConversationSample.model_validate(
+            {
+                "kind": "conversation",
+                "turns": [{"role": "user", "content": "hi"}],
+                "mcp_metadata": {"servers": [], "unexpected": True},
+            }
+        )
+
+
+def test_conversation_previews_pick_first_user_and_last_assistant():
+    from app.evals.samples import (
+        ConversationSample,
+        conversation_actual_preview,
+        conversation_input_preview,
+    )
+
+    sample = ConversationSample.model_validate(
+        {
+            "kind": "conversation",
+            "turns": [
+                {"role": "system", "content": "be brief"},
+                {"role": "user", "content": "first question"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second question"},
+                {"role": "assistant", "content": "final answer"},
+            ],
+        }
+    )
+
+    assert conversation_input_preview(sample) == "first question"
+    assert conversation_actual_preview(sample) == "final answer"

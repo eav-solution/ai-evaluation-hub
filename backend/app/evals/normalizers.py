@@ -4,6 +4,7 @@ from typing import Any
 from app.evals.base import SampleKind
 from app.evals.samples import (
     AgentTraceSample,
+    ConversationSample,
     EvaluationSample,
     SampleSource,
     SingleTurnSample,
@@ -12,6 +13,7 @@ from app.evals.samples import (
 
 _MISSING = object()
 _AGENT_STRUCTURED_FIELDS = ("agent_trace", "tools_called", "expected_tools")
+_CONVERSATION_STRUCTURED_FIELDS = ("turns", "mcp_metadata", "mcp_events")
 
 
 def _mapped_value(
@@ -57,6 +59,44 @@ def _sample_source(source_ref: SampleSource | dict[str, Any] | None) -> SampleSo
     return SampleSource.model_validate(source_ref)
 
 
+def _conversation_sample(
+    source: dict[str, Any],
+    schema_map: dict[str, str],
+    response_fields: dict[str, Any],
+    source_ref: SampleSource | dict[str, Any] | None,
+) -> ConversationSample:
+    structured: dict[str, Any] = {}
+    for field in _CONVERSATION_STRUCTURED_FIELDS:
+        value = _mapped_value(source, schema_map, field, response_fields)
+        if value is _MISSING or value is None:
+            if field == "turns":
+                raise ValueError("Mapped turns value is missing")
+            continue
+        column = schema_map.get(field, field)
+        structured[field] = _structured_value(value, field, column)
+
+    chatbot_role = _mapped_value(
+        source, schema_map, "chatbot_role", response_fields
+    )
+    conversation_context = _mapped_value(
+        source, schema_map, "conversation_context", response_fields
+    )
+    metadata = _mapped_value(source, schema_map, "metadata", response_fields)
+    tags = _mapped_value(source, schema_map, "tags", response_fields)
+    return ConversationSample(
+        **structured,
+        chatbot_role=(
+            None
+            if chatbot_role is _MISSING or chatbot_role is None
+            else str(chatbot_role)
+        ),
+        conversation_context=_contexts(conversation_context) or [],
+        metadata={} if metadata is _MISSING or metadata is None else metadata,
+        tags=[] if tags is _MISSING or tags is None else tags,
+        source=_sample_source(source_ref),
+    )
+
+
 def normalize_sample(
     sample_kind: SampleKind,
     source: dict[str, Any],
@@ -65,6 +105,13 @@ def normalize_sample(
     source_ref: SampleSource | dict[str, Any] | None = None,
 ) -> EvaluationSample:
     response_fields = overrides or {}
+    if sample_kind == "conversation":
+        return _conversation_sample(
+            source,
+            schema_map,
+            response_fields,
+            source_ref,
+        )
     input_value = _mapped_value(source, schema_map, "input", response_fields)
     actual_output = _mapped_value(source, schema_map, "actual_output", response_fields)
     if input_value is _MISSING or input_value is None:

@@ -50,6 +50,15 @@ class MCPEvent(StrictModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class MCPServerInfo(StrictModel):
+    server_name: str = Field(min_length=1)
+    transport: str | None = None
+
+
+class MCPMetadata(StrictModel):
+    servers: list[MCPServerInfo] = Field(default_factory=list)
+
+
 class TextBlock(StrictModel):
     type: Literal["text"] = "text"
     text: str
@@ -96,10 +105,27 @@ class AgentTraceSample(SampleMetadata):
 class ConversationSample(SampleMetadata):
     kind: Literal["conversation"] = "conversation"
     turns: list[ConversationTurn] = Field(min_length=1)
-    chatbot_role: str = Field(min_length=1)
+    chatbot_role: str | None = None
     conversation_context: list[str] = Field(default_factory=list)
-    mcp_metadata: dict[str, Any] = Field(default_factory=dict)
+    mcp_metadata: MCPMetadata = Field(default_factory=MCPMetadata)
     mcp_events: list[MCPEvent] = Field(default_factory=list)
+
+
+def conversation_input_preview(sample: "ConversationSample") -> str:
+    return next(
+        (turn.content for turn in sample.turns if turn.role == "user"), ""
+    )
+
+
+def conversation_actual_preview(sample: "ConversationSample") -> str:
+    return next(
+        (
+            turn.content
+            for turn in reversed(sample.turns)
+            if turn.role == "assistant"
+        ),
+        "",
+    )
 
 
 class MultimodalSample(SampleMetadata):
