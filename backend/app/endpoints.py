@@ -54,7 +54,9 @@ def render_template(template, row: EvalRow):
     if template in values:
         return values[template]
     for placeholder, value in values.items():
-        replacement = json.dumps(value) if isinstance(value, (dict, list)) else str(value or "")
+        replacement = (
+            json.dumps(value) if isinstance(value, (dict, list)) else str(value or "")
+        )
         template = template.replace(placeholder, replacement)
     return template
 
@@ -90,9 +92,7 @@ def extract_response_fields(payload, config: dict) -> dict[str, Any]:
                 values[field] = [match.value for match in matches]
             else:
                 single = matches[0].value
-                values[field] = (
-                    single if isinstance(single, (list, str)) else [single]
-                )
+                values[field] = single if isinstance(single, (list, str)) else [single]
             continue
         if len(matches) > 1:
             values[field] = [match.value for match in matches]
@@ -112,7 +112,11 @@ def validate_url(url: str) -> ParseResult:
     return parsed
 
 
-def _validate_destination(parsed: ParseResult) -> None:
+def _validate_destination(
+    parsed: ParseResult,
+    *,
+    allow_private: bool | None = None,
+) -> tuple[str, ...]:
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     addresses = socket.getaddrinfo(
         parsed.hostname,
@@ -121,12 +125,16 @@ def _validate_destination(parsed: ParseResult) -> None:
     )
     if not addresses:
         raise ValueError("Endpoint hostname did not resolve")
-    if settings.allow_private_endpoints:
-        return
-    for address in addresses:
-        resolved = ipaddress.ip_address(address[4][0])
+    resolved_addresses = tuple(dict.fromkeys(address[4][0] for address in addresses))
+    if allow_private is None:
+        allow_private = settings.allow_private_endpoints
+    if allow_private:
+        return resolved_addresses
+    for address in resolved_addresses:
+        resolved = ipaddress.ip_address(address)
         if not resolved.is_global:
             raise ValueError("Endpoint resolves to a private or non-public address")
+    return resolved_addresses
 
 
 def _request(method: str, url: str, headers: dict[str, str], body):
