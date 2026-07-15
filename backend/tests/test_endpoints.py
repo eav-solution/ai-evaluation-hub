@@ -152,6 +152,26 @@ def test_extract_agentic_response_fields_preserves_structured_arrays():
     }
 
 
+def test_structured_wildcard_single_match_stays_a_list():
+    from app.endpoints import extract_response_fields
+
+    fields = extract_response_fields(
+        {
+            "turns": [{"role": "user", "content": "hi"}],
+            "trace": [{"type": "tool", "name": "read"}],
+        },
+        {
+            "response_mappings": {
+                "turns": "$.turns[*]",
+                "agent_trace": "$.trace[*]",
+            }
+        },
+    )
+
+    assert fields["turns"] == [{"role": "user", "content": "hi"}]
+    assert fields["agent_trace"] == [{"type": "tool", "name": "read"}]
+
+
 def test_endpoint_mappings_accept_conversation_fields():
     from app.endpoints import EndpointConfig, extract_response_fields
 

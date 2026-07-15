@@ -85,7 +85,7 @@
             {{ row.actual or "" }}
             {% if row.contexts %}<details><summary>Contexts</summary><pre>{{ row.contexts|tojson(indent=2) }}</pre></details>{% endif %}
             {% set detail = detail_views.get(row.id) %}
-            {% if detail.trusted_context is not none or detail.agent_trace is not none or detail.tools_called is not none or detail.expected_tools is not none or detail.turns is not none or detail.chatbot_role is not none or detail.mcp_events is not none or detail.other_details is not none or row.usage is not none or row.estimated_cost is not none %}
+            {% if detail.trusted_context is not none or detail.agent_trace is not none or detail.tools_called is not none or detail.expected_tools is not none or detail.turns is not none or detail.chatbot_role is not none or detail.conversation_context is not none or detail.mcp_events is not none or detail.other_details is not none or row.usage is not none or row.estimated_cost is not none %}
             <details>
               <summary>Result metadata</summary>
               {% if detail.trusted_context is not none %}
@@ -107,6 +107,9 @@
               {% endif %}
               {% if detail.chatbot_role is not none %}
               <strong>Chatbot role</strong><pre>{{ detail.chatbot_role }}</pre>
+              {% endif %}
+              {% if detail.conversation_context is not none %}
+              <strong>Conversation context</strong><pre>{{ detail.conversation_context|tojson(indent=2) }}</pre>
               {% endif %}
               {% if detail.mcp_events is not none %}
               <strong>MCP events</strong><pre>{{ detail.mcp_events|tojson(indent=2) }}</pre>

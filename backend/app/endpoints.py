@@ -86,11 +86,13 @@ def extract_response_fields(payload, config: dict) -> dict[str, Any]:
             values[field] = answer if isinstance(answer, str) else json.dumps(answer)
             continue
         if field in _STRUCTURED_RESPONSE_FIELDS:
-            values[field] = (
-                [match.value for match in matches]
-                if len(matches) > 1
-                else matches[0].value
-            )
+            if len(matches) > 1:
+                values[field] = [match.value for match in matches]
+            else:
+                single = matches[0].value
+                values[field] = (
+                    single if isinstance(single, (list, str)) else [single]
+                )
             continue
         if len(matches) > 1:
             values[field] = [match.value for match in matches]

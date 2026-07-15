@@ -57,6 +57,7 @@ def _result_detail_view(details: dict | None) -> dict:
             "expected_tools": None,
             "turns": None,
             "chatbot_role": None,
+            "conversation_context": None,
             "mcp_events": None,
             "other_details": details or None,
         }
@@ -85,6 +86,7 @@ def _result_detail_view(details: dict | None) -> dict:
             "expected_tools": None,
             "turns": sample.get("turns"),
             "chatbot_role": sample.get("chatbot_role"),
+            "conversation_context": sample.get("conversation_context") or None,
             "mcp_events": sample.get("mcp_events") or None,
             "other_details": _other_result_details(
                 details,
@@ -101,6 +103,7 @@ def _result_detail_view(details: dict | None) -> dict:
             "expected_tools": None,
             "turns": None,
             "chatbot_role": None,
+            "conversation_context": None,
             "mcp_events": None,
             "other_details": details,
         }
@@ -120,6 +123,7 @@ def _result_detail_view(details: dict | None) -> dict:
         "expected_tools": sample.get("expected_tools"),
         "turns": None,
         "chatbot_role": None,
+        "conversation_context": None,
         "mcp_events": None,
         "other_details": _other_result_details(details, sample, typed_fields),
     }

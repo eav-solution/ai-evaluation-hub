@@ -291,7 +291,7 @@ describe("RunReport metric information", () => {
             {role: "assistant", content: "It ships tomorrow."},
           ],
           chatbot_role: "support agent",
-          conversation_context: [],
+          conversation_context: ["Orders may ship the next business day."],
           mcp_metadata: {servers: [{server_name: "orders"}]},
           mcp_events: [{type: "tool", name: "lookup_order", payload: {}}],
           metadata: {},
@@ -311,6 +311,10 @@ describe("RunReport metric information", () => {
     expect(within(drilldown).getByText("Turns")).toBeInTheDocument();
     expect(within(drilldown).getByText("Chatbot role")).toBeInTheDocument();
     expect(within(drilldown).getByText("support agent")).toBeInTheDocument();
+    expect(within(drilldown).getByText("Conversation context")).toBeInTheDocument();
+    expect(
+      within(drilldown).getByText(/Orders may ship the next business day/),
+    ).toBeInTheDocument();
     expect(within(drilldown).getByText("MCP events")).toBeInTheDocument();
     expect(within(drilldown).getByText(/lookup_order/)).toBeInTheDocument();
     expect(within(drilldown).getByText("Details")).toBeInTheDocument();

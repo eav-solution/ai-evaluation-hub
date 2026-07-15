@@ -66,6 +66,7 @@ function resultDetailView(details: Record<string, unknown> | null) {
       expectedTools: null,
       turns: null,
       chatbotRole: null,
+      conversationContext: null,
       mcpEvents: null,
       otherDetails: details && Object.keys(details).length ? details : null,
     };
@@ -88,6 +89,10 @@ function resultDetailView(details: Record<string, unknown> | null) {
       expectedTools: null,
       turns: fields.turns ?? null,
       chatbotRole: fields.chatbot_role ?? null,
+      conversationContext:
+        Array.isArray(fields.conversation_context) && !fields.conversation_context.length
+          ? null
+          : fields.conversation_context ?? null,
       mcpEvents:
         Array.isArray(fields.mcp_events) && !fields.mcp_events.length
           ? null
@@ -116,6 +121,7 @@ function resultDetailView(details: Record<string, unknown> | null) {
       expectedTools: null,
       turns: null,
       chatbotRole: null,
+      conversationContext: null,
       mcpEvents: null,
       otherDetails: details,
     };
@@ -128,6 +134,7 @@ function resultDetailView(details: Record<string, unknown> | null) {
     expectedTools: fields.expected_tools ?? null,
     turns: null,
     chatbotRole: null,
+    conversationContext: null,
     mcpEvents: null,
     otherDetails: filteredOtherDetails(details, fields, [
       "kind",
@@ -394,6 +401,7 @@ export function RunReport({
                   detailView.expectedTools !== null ||
                   detailView.turns !== null ||
                   detailView.chatbotRole !== null ||
+                  detailView.conversationContext !== null ||
                   detailView.mcpEvents !== null ||
                   detailView.otherDetails !== null ||
                   row.usage !== null ||
@@ -449,6 +457,14 @@ export function RunReport({
                               <div>
                                 <strong>Chatbot role</strong>
                                 <p>{String(detailView.chatbotRole)}</p>
+                              </div>
+                            )}
+                            {detailView.conversationContext !== null && (
+                              <div>
+                                <strong>Conversation context</strong>
+                                <pre>
+                                  {JSON.stringify(detailView.conversationContext, null, 2)}
+                                </pre>
                               </div>
                             )}
                             {detailView.mcpEvents !== null && (

@@ -198,7 +198,7 @@ def test_conversation_exports_keep_typed_details_and_csv_score_columns(
                 },
             ],
             "chatbot_role": "support agent",
-            "conversation_context": [],
+            "conversation_context": ["Orders may ship the next business day."],
             "mcp_metadata": {"servers": [{"server_name": "orders"}]},
             "mcp_events": [
                 {"type": "tool", "name": "lookup_order", "payload": {}}
@@ -218,6 +218,8 @@ def test_conversation_exports_keep_typed_details_and_csv_score_columns(
     assert payload["results"][0]["details"]["sample"] == result.details["sample"]
     assert "Turns" in html
     assert "Chatbot role" in html
+    assert "Conversation context" in html
+    assert "Orders may ship the next business day." in html
     assert "Where is my order?" in html
     assert "It ships tomorrow." in html
     assert "MCP events" in html
