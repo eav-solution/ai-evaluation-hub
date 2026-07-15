@@ -213,28 +213,30 @@ def create_run(
     )
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    if "input" not in dataset.schema_map:
-        raise HTTPException(
-            status_code=422,
-            detail="Runs need an input column mapping",
-        )
-    if body.mode == "static" and "actual_output" not in dataset.schema_map:
-        raise HTTPException(
-            status_code=422,
-            detail="Static runs need an actual_output column mapping",
-        )
-    if body.mode == "endpoint" and body.endpoint_config is None:
-        raise HTTPException(
-            status_code=422, detail="Endpoint runs need endpoint_config"
-        )
 
     available_fields = _available_sample_fields(
         dataset.schema_map,
         body.endpoint_config if body.mode == "endpoint" else None,
     )
-    selected, resource_roles, _sample_kind = _validate_metric_selection(
+    selected, resource_roles, sample_kind = _validate_metric_selection(
         body.metrics, available_fields
     )
+
+    if sample_kind != "conversation":
+        if "input" not in dataset.schema_map:
+            raise HTTPException(
+                status_code=422,
+                detail="Runs need an input column mapping",
+            )
+        if body.mode == "static" and "actual_output" not in dataset.schema_map:
+            raise HTTPException(
+                status_code=422,
+                detail="Static runs need an actual_output column mapping",
+            )
+    if body.mode == "endpoint" and body.endpoint_config is None:
+        raise HTTPException(
+            status_code=422, detail="Endpoint runs need endpoint_config"
+        )
 
     needs_judge = "judge" in resource_roles
     if needs_judge and body.judge is None:

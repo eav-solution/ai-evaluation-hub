@@ -158,6 +158,47 @@ def test_dataset_schema_map_accepts_agentic_structured_fields(
     assert response.status_code == 200
 
 
+def test_dataset_schema_map_accepts_conversation_fields(
+    client, auth_headers, object_store
+):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    uploaded = client.post(
+        f"/api/workspaces/{workspace_id}/datasets",
+        data={"name": "Conversations"},
+        files={
+            "file": (
+                "conversations.json",
+                b'[{"history":[],"role":"agent","context":[],"servers":{},"events":[]}]',
+                "application/json",
+            )
+        },
+        headers=auth_headers,
+    ).json()
+    url = f"/api/workspaces/{workspace_id}/datasets/{uploaded['id']}/schema-map"
+
+    response = client.patch(
+        url,
+        json={
+            "schema_map": {
+                "turns": "history",
+                "chatbot_role": "role",
+                "conversation_context": "context",
+                "mcp_metadata": "servers",
+                "mcp_events": "events",
+            }
+        },
+        headers=auth_headers,
+    )
+    unknown = client.patch(
+        url,
+        json={"schema_map": {"conversation_unknown": "history"}},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert unknown.status_code == 422
+
+
 def test_nonmember_cannot_access_dataset(client, auth_headers, object_store):
     workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
     token = client.post(

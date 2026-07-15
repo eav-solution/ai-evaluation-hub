@@ -11,18 +11,31 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.config import settings
 from app.evals.base import EvalRow
+from app.evals.samples import (
+    ConversationSample,
+    conversation_actual_preview,
+    conversation_input_preview,
+)
 from app.security import decrypt_secret
 
 
 def render_template(template, row: EvalRow):
-    values = {
-        "{{input}}": row.input,
-        "{{contexts}}": row.contexts or [],
-        "{{context}}": row.context or [],
-        "{{retrieval_contexts}}": row.retrieval_contexts or [],
-        "{{expected_output}}": row.expected_output,
-        "{{actual_output}}": row.actual_output,
-    }
+    if isinstance(row, ConversationSample):
+        values = {
+            "{{turns}}": [turn.model_dump(mode="json") for turn in row.turns],
+            "{{chatbot_role}}": row.chatbot_role or "",
+            "{{input}}": conversation_input_preview(row),
+            "{{actual_output}}": conversation_actual_preview(row),
+        }
+    else:
+        values = {
+            "{{input}}": row.input,
+            "{{contexts}}": row.contexts or [],
+            "{{context}}": row.context or [],
+            "{{retrieval_contexts}}": row.retrieval_contexts or [],
+            "{{expected_output}}": row.expected_output,
+            "{{actual_output}}": row.actual_output,
+        }
     if isinstance(template, dict):
         return {key: render_template(value, row) for key, value in template.items()}
     if isinstance(template, list):
@@ -184,6 +197,8 @@ class EndpointConfig(BaseModel):
             "agent_trace",
             "tools_called",
             "expected_tools",
+            "turns",
+            "mcp_events",
         }
         unknown = set(value) - allowed
         if unknown:

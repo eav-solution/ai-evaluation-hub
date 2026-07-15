@@ -832,6 +832,164 @@ def test_create_tool_run_also_requires_the_agent_trace_sample_field(
     assert "agent_trace" in response.json()["detail"]
 
 
+def _post_conversation_run(
+    client,
+    auth_headers,
+    db,
+    monkeypatch,
+    *,
+    metric="deepeval.conversation_completeness",
+    schema_map=None,
+    judge=True,
+    mode="static",
+    endpoint_config=None,
+):
+    workspace, dataset, connection = _ready_dataset(
+        db,
+        provider="openai" if judge else None,
+        schema_map=schema_map or {"turns": "conversation"},
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+    payload = {
+        "dataset_id": dataset.id,
+        "name": "Conversation check",
+        "mode": mode,
+        "metrics": [{"key": metric}],
+        "judge": (
+            {"connection_id": connection.id, "model": "gpt-4.1-mini"}
+            if connection
+            else None
+        ),
+    }
+    if endpoint_config is not None:
+        payload["endpoint_config"] = endpoint_config
+    return client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json=payload,
+        headers=auth_headers,
+    )
+
+
+def test_create_static_conversation_run_needs_no_single_turn_columns(
+    client, auth_headers, db, monkeypatch
+):
+    response = _post_conversation_run(
+        client, auth_headers, db, monkeypatch
+    )
+
+    assert response.status_code == 201
+
+
+def test_create_role_adherence_run_requires_role_mapping(
+    client, auth_headers, db, monkeypatch
+):
+    response = _post_conversation_run(
+        client,
+        auth_headers,
+        db,
+        monkeypatch,
+        metric="deepeval.role_adherence",
+    )
+
+    assert response.status_code == 422
+    assert "chatbot_role" in response.json()["detail"]
+
+
+def test_create_mcp_use_run_requires_event_mapping(
+    client, auth_headers, db, monkeypatch
+):
+    response = _post_conversation_run(
+        client,
+        auth_headers,
+        db,
+        monkeypatch,
+        metric="deepeval.mcp_use",
+        schema_map={
+            "turns": "conversation",
+            "mcp_metadata": "servers",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "mcp_events" in response.json()["detail"]
+
+
+def test_create_run_rejects_mixed_conversation_and_single_turn_metrics(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "turns": "conversation",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Mixed conversation",
+            "mode": "static",
+            "metrics": [
+                {"key": "deepeval.turn_relevancy"},
+                {"key": "deepeval.answer_relevancy"},
+            ],
+            "judge": {
+                "connection_id": connection.id,
+                "model": "gpt-4.1-mini",
+            },
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Metrics with different sample kinds need a separate run"
+    )
+
+
+def test_create_conversation_run_requires_judge(
+    client, auth_headers, db, monkeypatch
+):
+    response = _post_conversation_run(
+        client,
+        auth_headers,
+        db,
+        monkeypatch,
+        metric="deepeval.turn_relevancy",
+        judge=False,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "A judge connection is required for the selected metrics"
+    )
+
+
+def test_create_endpoint_conversation_run_accepts_turn_mapping(
+    client, auth_headers, db, monkeypatch
+):
+    response = _post_conversation_run(
+        client,
+        auth_headers,
+        db,
+        monkeypatch,
+        mode="endpoint",
+        endpoint_config={
+            "url": "https://example.com/chat",
+            "response_mappings": {
+                "actual_output": "$.answer",
+                "turns": "$.turns",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+
+
 def _custom_connection(db, workspace_id, name="Gateway", key=None):
     from app.models import ProviderConnection
     from app.security import encrypt_secret

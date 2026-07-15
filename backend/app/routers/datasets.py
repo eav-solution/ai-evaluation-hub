@@ -26,6 +26,11 @@ SCHEMA_FIELDS = {
     "agent_trace",
     "tools_called",
     "expected_tools",
+    "turns",
+    "chatbot_role",
+    "conversation_context",
+    "mcp_metadata",
+    "mcp_events",
 }
 
 

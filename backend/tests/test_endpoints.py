@@ -152,6 +152,66 @@ def test_extract_agentic_response_fields_preserves_structured_arrays():
     }
 
 
+def test_endpoint_mappings_accept_conversation_fields():
+    from app.endpoints import EndpointConfig, extract_response_fields
+
+    config = EndpointConfig(
+        url="https://example.test/chat",
+        response_mappings={
+            "actual_output": "$.answer",
+            "turns": "$.turns",
+            "mcp_events": "$.events",
+        },
+    )
+    payload = {
+        "answer": "done",
+        "turns": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "done"},
+        ],
+        "events": [{"type": "tool", "name": "read", "payload": {}}],
+    }
+
+    fields = extract_response_fields(payload, config.model_dump())
+
+    assert fields["turns"][1] == {"role": "assistant", "content": "done"}
+    assert fields["mcp_events"][0]["name"] == "read"
+
+
+def test_render_template_exposes_conversation_values():
+    import json
+
+    from app.endpoints import render_template
+    from app.evals.samples import ConversationSample
+
+    sample = ConversationSample.model_validate(
+        {
+            "kind": "conversation",
+            "chatbot_role": "concierge",
+            "turns": [
+                {"role": "user", "content": "book a room"},
+                {"role": "assistant", "content": "which date?"},
+            ],
+        }
+    )
+    body = render_template(
+        {
+            "conversation": "{{turns}}",
+            "role": "{{chatbot_role}}",
+            "probe": "{{input}}",
+        },
+        sample,
+    )
+
+    assert body["conversation"][0]["content"] == "book a room"
+    assert body["role"] == "concierge"
+    assert body["probe"] == "book a room"
+    interpolated = render_template({"note": "history: {{turns}}"}, sample)
+    assert json.loads(interpolated["note"].removeprefix("history: "))[0][
+        "role"
+    ] == "user"
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [
