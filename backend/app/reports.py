@@ -21,39 +21,17 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False) if value is not None else None
 
 
-def _result_detail_view(details: dict | None) -> dict:
-    sample = details.get("sample") if isinstance(details, dict) else None
-    if not isinstance(sample, dict):
-        return {
-            "trusted_context": None,
-            "agent_trace": None,
-            "tools_called": None,
-            "expected_tools": None,
-            "other_details": details or None,
-        }
-
-    trusted_context = sample.get("context")
-    if sample.get("kind") != "agent_trace":
-        return {
-            "trusted_context": trusted_context,
-            "agent_trace": None,
-            "tools_called": None,
-            "expected_tools": None,
-            "other_details": details,
-        }
-
+def _other_result_details(
+    details: dict,
+    sample: dict,
+    typed_fields: set[str],
+    extra_sample: dict | None = None,
+) -> dict | None:
     other_details = dict(details)
-    typed_fields = {
-        "kind",
-        "context",
-        "agent_trace",
-        "tools_called",
-        "expected_tools",
-        "normalizer_revision",
-    }
     other_sample = {
         key: value for key, value in sample.items() if key not in typed_fields
     }
+    other_sample.update(extra_sample or {})
     for key in ("metadata", "tags", "source"):
         if not other_sample.get(key):
             other_sample.pop(key, None)
@@ -66,12 +44,84 @@ def _result_detail_view(details: dict | None) -> dict:
         other_details["sample"] = other_sample
     else:
         other_details.pop("sample", None)
+    return other_details or None
+
+
+def _result_detail_view(details: dict | None) -> dict:
+    sample = details.get("sample") if isinstance(details, dict) else None
+    if not isinstance(sample, dict):
+        return {
+            "trusted_context": None,
+            "agent_trace": None,
+            "tools_called": None,
+            "expected_tools": None,
+            "turns": None,
+            "chatbot_role": None,
+            "mcp_events": None,
+            "other_details": details or None,
+        }
+
+    trusted_context = sample.get("context")
+    if sample.get("kind") == "conversation":
+        typed_fields = {
+            "kind",
+            "turns",
+            "chatbot_role",
+            "conversation_context",
+            "mcp_metadata",
+            "mcp_events",
+            "normalizer_revision",
+        }
+        mcp_metadata = sample.get("mcp_metadata")
+        extra_sample = (
+            {"mcp_metadata": mcp_metadata}
+            if isinstance(mcp_metadata, dict) and mcp_metadata.get("servers")
+            else None
+        )
+        return {
+            "trusted_context": None,
+            "agent_trace": None,
+            "tools_called": None,
+            "expected_tools": None,
+            "turns": sample.get("turns"),
+            "chatbot_role": sample.get("chatbot_role"),
+            "mcp_events": sample.get("mcp_events") or None,
+            "other_details": _other_result_details(
+                details,
+                sample,
+                typed_fields,
+                extra_sample,
+            ),
+        }
+    if sample.get("kind") != "agent_trace":
+        return {
+            "trusted_context": trusted_context,
+            "agent_trace": None,
+            "tools_called": None,
+            "expected_tools": None,
+            "turns": None,
+            "chatbot_role": None,
+            "mcp_events": None,
+            "other_details": details,
+        }
+
+    typed_fields = {
+        "kind",
+        "context",
+        "agent_trace",
+        "tools_called",
+        "expected_tools",
+        "normalizer_revision",
+    }
     return {
         "trusted_context": trusted_context,
         "agent_trace": sample.get("agent_trace"),
         "tools_called": sample.get("tools_called"),
         "expected_tools": sample.get("expected_tools"),
-        "other_details": other_details or None,
+        "turns": None,
+        "chatbot_role": None,
+        "mcp_events": None,
+        "other_details": _other_result_details(details, sample, typed_fields),
     }
 
 

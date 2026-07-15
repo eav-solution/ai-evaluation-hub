@@ -24,42 +24,16 @@ export function metricLabel(metricsByKey: Map<string, Metric>, key: string): str
   return metricsByKey.get(key)?.display_name ?? key;
 }
 
-function resultDetailView(details: Record<string, unknown> | null) {
-  const sample = details?.sample;
-  if (!sample || typeof sample !== "object" || Array.isArray(sample)) {
-    return {
-      trustedContext: null,
-      agentTrace: null,
-      toolsCalled: null,
-      expectedTools: null,
-      otherDetails: details && Object.keys(details).length ? details : null,
-    };
-  }
-
-  const fields = sample as Record<string, unknown>;
-  const trustedContext = fields.context ?? null;
-  if (fields.kind !== "agent_trace") {
-    return {
-      trustedContext,
-      agentTrace: null,
-      toolsCalled: null,
-      expectedTools: null,
-      otherDetails: details,
-    };
-  }
-
+function filteredOtherDetails(
+  details: Record<string, unknown>,
+  fields: Record<string, unknown>,
+  typedFields: string[],
+  extraSample: Record<string, unknown> = {},
+) {
   const otherDetails = {...details};
   const otherSample = {...fields};
-  for (const key of [
-    "kind",
-    "context",
-    "agent_trace",
-    "tools_called",
-    "expected_tools",
-    "normalizer_revision",
-  ]) {
-    delete otherSample[key];
-  }
+  typedFields.forEach((key) => delete otherSample[key]);
+  Object.assign(otherSample, extraSample);
   for (const key of ["metadata", "tags", "source"]) {
     if (!otherSample[key]) delete otherSample[key];
     else if (Array.isArray(otherSample[key]) && !otherSample[key].length) delete otherSample[key];
@@ -79,13 +53,90 @@ function resultDetailView(details: Record<string, unknown> | null) {
   ) delete otherSample.source;
   if (Object.keys(otherSample).length) otherDetails.sample = otherSample;
   else delete otherDetails.sample;
+  return Object.keys(otherDetails).length ? otherDetails : null;
+}
+
+function resultDetailView(details: Record<string, unknown> | null) {
+  const sample = details?.sample;
+  if (!sample || typeof sample !== "object" || Array.isArray(sample)) {
+    return {
+      trustedContext: null,
+      agentTrace: null,
+      toolsCalled: null,
+      expectedTools: null,
+      turns: null,
+      chatbotRole: null,
+      mcpEvents: null,
+      otherDetails: details && Object.keys(details).length ? details : null,
+    };
+  }
+
+  const fields = sample as Record<string, unknown>;
+  const trustedContext = fields.context ?? null;
+  if (fields.kind === "conversation") {
+    const mcpMetadata = fields.mcp_metadata;
+    const keepMcpMetadata =
+      mcpMetadata &&
+      typeof mcpMetadata === "object" &&
+      !Array.isArray(mcpMetadata) &&
+      Array.isArray((mcpMetadata as Record<string, unknown>).servers) &&
+      ((mcpMetadata as Record<string, unknown>).servers as unknown[]).length > 0;
+    return {
+      trustedContext: null,
+      agentTrace: null,
+      toolsCalled: null,
+      expectedTools: null,
+      turns: fields.turns ?? null,
+      chatbotRole: fields.chatbot_role ?? null,
+      mcpEvents:
+        Array.isArray(fields.mcp_events) && !fields.mcp_events.length
+          ? null
+          : fields.mcp_events ?? null,
+      otherDetails: filteredOtherDetails(
+        details,
+        fields,
+        [
+          "kind",
+          "turns",
+          "chatbot_role",
+          "conversation_context",
+          "mcp_metadata",
+          "mcp_events",
+          "normalizer_revision",
+        ],
+        keepMcpMetadata ? {mcp_metadata: mcpMetadata} : {},
+      ),
+    };
+  }
+  if (fields.kind !== "agent_trace") {
+    return {
+      trustedContext,
+      agentTrace: null,
+      toolsCalled: null,
+      expectedTools: null,
+      turns: null,
+      chatbotRole: null,
+      mcpEvents: null,
+      otherDetails: details,
+    };
+  }
 
   return {
     trustedContext,
     agentTrace: fields.agent_trace ?? null,
     toolsCalled: fields.tools_called ?? null,
     expectedTools: fields.expected_tools ?? null,
-    otherDetails: Object.keys(otherDetails).length ? otherDetails : null,
+    turns: null,
+    chatbotRole: null,
+    mcpEvents: null,
+    otherDetails: filteredOtherDetails(details, fields, [
+      "kind",
+      "context",
+      "agent_trace",
+      "tools_called",
+      "expected_tools",
+      "normalizer_revision",
+    ]),
   };
 }
 
@@ -341,6 +392,9 @@ export function RunReport({
                   detailView.agentTrace !== null ||
                   detailView.toolsCalled !== null ||
                   detailView.expectedTools !== null ||
+                  detailView.turns !== null ||
+                  detailView.chatbotRole !== null ||
+                  detailView.mcpEvents !== null ||
                   detailView.otherDetails !== null ||
                   row.usage !== null ||
                   row.estimated_cost !== null;
@@ -383,6 +437,24 @@ export function RunReport({
                               <div>
                                 <strong>Expected tools</strong>
                                 <pre>{JSON.stringify(detailView.expectedTools, null, 2)}</pre>
+                              </div>
+                            )}
+                            {detailView.turns !== null && (
+                              <div>
+                                <strong>Turns</strong>
+                                <pre>{JSON.stringify(detailView.turns, null, 2)}</pre>
+                              </div>
+                            )}
+                            {detailView.chatbotRole !== null && (
+                              <div>
+                                <strong>Chatbot role</strong>
+                                <p>{String(detailView.chatbotRole)}</p>
+                              </div>
+                            )}
+                            {detailView.mcpEvents !== null && (
+                              <div>
+                                <strong>MCP events</strong>
+                                <pre>{JSON.stringify(detailView.mcpEvents, null, 2)}</pre>
                               </div>
                             )}
                             {detailView.otherDetails !== null && (

@@ -279,6 +279,44 @@ describe("RunReport metric information", () => {
     expect(within(drilldown).getByText(/req-agent-1/)).toBeInTheDocument();
   });
 
+  it("shows typed conversation and MCP sections", async () => {
+    const conversationResult: RunResult = {
+      ...result(0, "Where is my order?", 1),
+      actual: "It ships tomorrow.",
+      details: {
+        sample: {
+          kind: "conversation",
+          turns: [
+            {role: "user", content: "Where is my order?"},
+            {role: "assistant", content: "It ships tomorrow."},
+          ],
+          chatbot_role: "support agent",
+          conversation_context: [],
+          mcp_metadata: {servers: [{server_name: "orders"}]},
+          mcp_events: [{type: "tool", name: "lookup_order", payload: {}}],
+          metadata: {},
+          tags: [],
+          source: null,
+          normalizer_revision: "1",
+        },
+      },
+    };
+    mockReportApi(Promise.resolve([metric]), run, [conversationResult]);
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    const summary = screen.getByText("Result metadata");
+    fireEvent.click(summary);
+    const drilldown = summary.closest("details") as HTMLElement;
+    expect(within(drilldown).getByText("Turns")).toBeInTheDocument();
+    expect(within(drilldown).getByText("Chatbot role")).toBeInTheDocument();
+    expect(within(drilldown).getByText("support agent")).toBeInTheDocument();
+    expect(within(drilldown).getByText("MCP events")).toBeInTheDocument();
+    expect(within(drilldown).getByText(/lookup_order/)).toBeInTheDocument();
+    expect(within(drilldown).getByText("Details")).toBeInTheDocument();
+    expect(within(drilldown).getByText(/orders/)).toBeInTheDocument();
+  });
+
   it("does not show an empty metadata drill-down for historical rows", async () => {
     mockReportApi(Promise.resolve([metric]), run, [
       {...result(0, "legacy", 0.8), details: {}},

@@ -178,6 +178,58 @@ def test_agent_report_details_omit_empty_normalizer_boilerplate():
     assert view["other_details"] is None
 
 
+def test_conversation_exports_keep_typed_details_and_csv_score_columns(
+    client, auth_headers, db
+):
+    from app.reports import build_payload, render_csv, render_html
+
+    _workspace, run, summaries, results = _completed_run(db)
+    result = results[0]
+    result.input = "Where is my order?"
+    result.actual = "It ships tomorrow."
+    result.details = {
+        "sample": {
+            "kind": "conversation",
+            "turns": [
+                {"role": "user", "content": "Where is my order?"},
+                {
+                    "role": "assistant",
+                    "content": "It ships tomorrow.",
+                },
+            ],
+            "chatbot_role": "support agent",
+            "conversation_context": [],
+            "mcp_metadata": {"servers": [{"server_name": "orders"}]},
+            "mcp_events": [
+                {"type": "tool", "name": "lookup_order", "payload": {}}
+            ],
+            "metadata": {},
+            "tags": [],
+            "source": None,
+            "normalizer_revision": "1",
+        }
+    }
+    db.commit()
+
+    payload = build_payload(run, summaries, results)
+    html = render_html(run, summaries, results)
+    csv_header = next(csv.reader(io.StringIO(render_csv(run, results))))
+
+    assert payload["results"][0]["details"]["sample"] == result.details["sample"]
+    assert "Turns" in html
+    assert "Chatbot role" in html
+    assert "Where is my order?" in html
+    assert "It ships tomorrow." in html
+    assert "MCP events" in html
+    assert "lookup_order" in html
+    assert csv_header[-4:] == [
+        "deepeval.bias.score",
+        "deepeval.bias.passed",
+        "deepeval.bias.reason",
+        "deepeval.bias.error",
+    ]
+
+
 def test_export_download_routes(client, auth_headers, db):
     workspace, run, _summaries, _results = _completed_run(db)
     base = f"/api/workspaces/{workspace.id}/runs/{run.id}"
