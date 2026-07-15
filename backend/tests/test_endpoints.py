@@ -123,6 +123,35 @@ def test_extract_named_context_fields_always_produce_lists():
     }
 
 
+def test_extract_agentic_response_fields_preserves_structured_arrays():
+    from app.endpoints import EndpointConfig, extract_response_fields
+
+    payload = {
+        "answer": "Booked",
+        "trace": [{"type": "tool", "name": "book"}],
+        "called": [{"name": "book", "arguments": {"flight": "VN1"}}],
+        "expected": ["book"],
+    }
+    config = EndpointConfig(
+        url="https://example.test/agent",
+        response_mappings={
+            "actual_output": "$.answer",
+            "agent_trace": "$.trace",
+            "tools_called": "$.called",
+            "expected_tools": "$.expected",
+        },
+    )
+
+    assert extract_response_fields(payload, config.model_dump()) == {
+        "actual_output": "Booked",
+        "agent_trace": [{"type": "tool", "name": "book"}],
+        "tools_called": [
+            {"name": "book", "arguments": {"flight": "VN1"}}
+        ],
+        "expected_tools": ["book"],
+    }
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [

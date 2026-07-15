@@ -23,15 +23,15 @@ def build_definition_snapshot(
     *,
     dataset: Dataset,
     selected: list[tuple[MetricAdapter, dict[str, Any]]],
-    judge_connection: ProviderConnection,
-    judge_model: str,
+    judge_connection: ProviderConnection | None,
+    judge_model: str | None,
     embedding_connection: ProviderConnection | None,
     embedding_model: str | None,
     endpoint_config: EndpointConfig | None,
 ) -> dict[str, Any]:
-    resources: dict[str, dict[str, str]] = {
-        "judge": _connection_snapshot(judge_connection, judge_model)
-    }
+    resources: dict[str, dict[str, str]] = {}
+    if judge_connection is not None and judge_model is not None:
+        resources["judge"] = _connection_snapshot(judge_connection, judge_model)
     if embedding_connection is not None and embedding_model is not None:
         resources["embedding"] = _connection_snapshot(
             embedding_connection,

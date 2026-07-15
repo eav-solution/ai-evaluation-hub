@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.connections import DiscoveryError, discover_models
 from app.deps import get_db, get_workspace
 from app.endpoints import EndpointConfig
+from app.evals.base import MetricAdapter, ResourceRole, SampleKind
 from app.evals.registry import METRICS
 from app.evals.snapshots import build_definition_snapshot
 from app.models import (
@@ -92,7 +93,7 @@ class RunIn(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     mode: Literal["static", "endpoint"]
     metrics: list[MetricIn] = Field(min_length=1)
-    judge: JudgeIn
+    judge: JudgeIn | None = None
     endpoint_config: EndpointConfig | None = None
 
 
@@ -132,6 +133,61 @@ def _get_run(run_id: str, workspace_id: str, db: Session) -> Run:
     return row
 
 
+def _validate_metric_selection(
+    metrics: list[MetricIn], available_fields: set[str]
+) -> tuple[
+    list[tuple[MetricAdapter, dict[str, Any]]],
+    frozenset[ResourceRole],
+    SampleKind,
+]:
+    metric_keys = [item.key for item in metrics]
+    if len(metric_keys) != len(set(metric_keys)):
+        raise HTTPException(status_code=422, detail="Metrics must be unique")
+
+    selected: list[tuple[MetricAdapter, dict[str, Any]]] = []
+    for index, item in enumerate(metrics):
+        adapter = METRICS.get(item.key)
+        if adapter is None:
+            raise HTTPException(status_code=422, detail=f"Unknown metric: {item.key}")
+        try:
+            config = adapter.validate_config(item.config)
+        except ValidationError as exc:
+            errors = []
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            ):
+                errors.append(
+                    {
+                        **error,
+                        "loc": ["body", "metrics", index, "config", *error["loc"]],
+                    }
+                )
+            raise HTTPException(status_code=422, detail=errors) from exc
+        selected.append((adapter, config))
+
+    sample_kinds = {adapter.sample_kind for adapter, _ in selected}
+    if len(sample_kinds) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Metrics with different sample kinds need a separate run",
+        )
+
+    resource_roles: set[ResourceRole] = set()
+    for adapter, config in selected:
+        missing = adapter.missing_requirements(config, available_fields)
+        if missing:
+            field = sorted(missing)[0]
+            raise HTTPException(
+                status_code=422,
+                detail=f"{adapter.display_name} needs a {field} column",
+            )
+        resource_roles.update(adapter.resources(config))
+
+    return selected, frozenset(resource_roles), next(iter(sample_kinds))
+
+
 @router.post("", status_code=201)
 def create_run(
     body: RunIn,
@@ -158,58 +214,37 @@ def create_run(
             status_code=422, detail="Endpoint runs need endpoint_config"
         )
 
-    metric_keys = [item.key for item in body.metrics]
-    if len(metric_keys) != len(set(metric_keys)):
-        raise HTTPException(status_code=422, detail="Metrics must be unique")
-    selected = []
-    resource_roles = set()
     available_fields = _available_sample_fields(
         dataset.schema_map,
         body.endpoint_config if body.mode == "endpoint" else None,
     )
-    for index, item in enumerate(body.metrics):
-        adapter = METRICS.get(item.key)
-        if adapter is None:
-            raise HTTPException(status_code=422, detail=f"Unknown metric: {item.key}")
-        try:
-            config = adapter.validate_config(item.config)
-        except ValidationError as exc:
-            errors = []
-            for error in exc.errors(
-                include_url=False,
-                include_context=False,
-                include_input=False,
-            ):
-                errors.append(
-                    {
-                        **error,
-                        "loc": ["body", "metrics", index, "config", *error["loc"]],
-                    }
-                )
-            raise HTTPException(status_code=422, detail=errors) from exc
-        missing = adapter.missing_requirements(config, available_fields)
-        if missing:
-            field = sorted(missing)[0]
-            raise HTTPException(
-                status_code=422,
-                detail=f"{adapter.display_name} needs a {field} column",
-            )
-        selected.append((adapter, config))
-        resource_roles.update(adapter.resources(config))
-
-    connection = (
-        db.query(ProviderConnection)
-        .filter_by(id=body.judge.connection_id, workspace_id=ws.id)
-        .first()
+    selected, resource_roles, _sample_kind = _validate_metric_selection(
+        body.metrics, available_fields
     )
-    if connection is None:
-        raise HTTPException(status_code=422, detail="Provider connection not found")
-    _confirm_custom_model(connection, body.judge.model)
+
+    needs_judge = "judge" in resource_roles
+    if needs_judge and body.judge is None:
+        raise HTTPException(
+            status_code=422,
+            detail="A judge connection is required for the selected metrics",
+        )
+    connection = None
+    if needs_judge:
+        assert body.judge is not None
+        connection = (
+            db.query(ProviderConnection)
+            .filter_by(id=body.judge.connection_id, workspace_id=ws.id)
+            .first()
+        )
+        if connection is None:
+            raise HTTPException(status_code=422, detail="Provider connection not found")
+        _confirm_custom_model(connection, body.judge.model)
 
     # Embeddings use their own connection, chosen only when a metric needs one.
     needs_embedding = "embedding" in resource_roles
     embedding_connection = None
     if needs_embedding:
+        assert body.judge is not None
         if not body.judge.embedding_connection_id or not body.judge.embedding_model:
             raise HTTPException(
                 status_code=422,
@@ -239,6 +274,28 @@ def create_run(
             for key, value in endpoint_config["headers"].items()
         }
 
+    judge_config: dict[str, Any] = {}
+    if connection is not None:
+        assert body.judge is not None
+        judge_config = {
+            "connection_id": connection.id,
+            "connection_name": connection.name,
+            "connection_type": connection.connection_type,
+            "model": body.judge.model,
+            "embedding_connection_id": (
+                embedding_connection.id if embedding_connection else None
+            ),
+            "embedding_connection_name": (
+                embedding_connection.name if embedding_connection else None
+            ),
+            "embedding_connection_type": (
+                embedding_connection.connection_type if embedding_connection else None
+            ),
+            "embedding_model": (
+                body.judge.embedding_model if embedding_connection else None
+            ),
+        }
+
     row = Run(
         workspace_id=ws.id,
         dataset_id=dataset.id,
@@ -248,31 +305,16 @@ def create_run(
             "metrics": [{"key": adapter.key, **config} for adapter, config in selected]
         },
         endpoint_config=endpoint_config,
-        judge_config={
-            "connection_id": connection.id,
-            "connection_name": connection.name,
-            "connection_type": connection.connection_type,
-            "model": body.judge.model,
-            "embedding_connection_id": embedding_connection.id
-            if embedding_connection
-            else None,
-            "embedding_connection_name": embedding_connection.name
-            if embedding_connection
-            else None,
-            "embedding_connection_type": (
-                embedding_connection.connection_type if embedding_connection else None
-            ),
-            "embedding_model": body.judge.embedding_model
-            if embedding_connection
-            else None,
-        },
+        judge_config=judge_config,
         definition_snapshot=build_definition_snapshot(
             dataset=dataset,
             selected=selected,
             judge_connection=connection,
-            judge_model=body.judge.model,
+            judge_model=body.judge.model if body.judge is not None else None,
             embedding_connection=embedding_connection,
-            embedding_model=body.judge.embedding_model,
+            embedding_model=(
+                body.judge.embedding_model if body.judge is not None else None
+            ),
             endpoint_config=body.endpoint_config,
         ),
         status="pending",

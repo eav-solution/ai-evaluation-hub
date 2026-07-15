@@ -271,8 +271,10 @@ git commit -m "feat(metrics): add agentic trace adapters"
 - Modify: `backend/app/endpoints.py`
 - Modify: `backend/app/evals/snapshots.py`
 - Modify: `backend/app/routers/runs.py`
+- Modify: `backend/app/routers/datasets.py`
 - Modify: `backend/tests/test_endpoints.py`
 - Modify: `backend/tests/test_runs.py`
+- Modify: `backend/tests/test_datasets.py`
 
 **Interfaces:**
 
@@ -332,14 +334,14 @@ Keep embedding validation unchanged and reachable only when `embedding` is selec
 
 - [ ] **Step 5: Extend endpoint and snapshot fields**
 
-Allow `agent_trace`, `tools_called`, and `expected_tools` in `response_mappings`. Snapshot the selected `agent_trace` kind and named mappings while keeping headers, keys, and URLs out of the definition snapshot.
+Allow `agent_trace`, `tools_called`, and `expected_tools` in `response_mappings`. Snapshot the selected `agent_trace` kind and named mappings while keeping headers, keys, and URLs out of the definition snapshot. Allow the same canonical structured fields in dataset schema mappings so JSON, JSONL, and CSV agent datasets can pass preflight.
 
 - [ ] **Step 6: Run GREEN and commit**
 
 Run: `cd backend && .venv/bin/pytest -q -p no:deepeval tests/test_endpoints.py tests/test_runs.py tests/test_metric_contract.py`
 
 ```bash
-git add backend/app/endpoints.py backend/app/evals/snapshots.py backend/app/routers/runs.py backend/tests/test_endpoints.py backend/tests/test_runs.py
+git add backend/app/endpoints.py backend/app/evals/snapshots.py backend/app/routers/runs.py backend/app/routers/datasets.py backend/tests/test_endpoints.py backend/tests/test_runs.py backend/tests/test_datasets.py
 git commit -m "feat(runs): validate agentic input mappings"
 ```
 

@@ -177,7 +177,14 @@ class EndpointConfig(BaseModel):
     @field_validator("response_mappings")
     @classmethod
     def _valid_response_mappings(cls, value: dict[str, str]) -> dict[str, str]:
-        allowed = {"actual_output", "context", "retrieval_contexts"}
+        allowed = {
+            "actual_output",
+            "context",
+            "retrieval_contexts",
+            "agent_trace",
+            "tools_called",
+            "expected_tools",
+        }
         unknown = set(value) - allowed
         if unknown:
             raise ValueError(f"Unknown response mapping: {sorted(unknown)[0]}")

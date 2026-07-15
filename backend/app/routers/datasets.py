@@ -23,6 +23,9 @@ SCHEMA_FIELDS = {
     "context",
     "retrieval_contexts",
     "contexts",
+    "agent_trace",
+    "tools_called",
+    "expected_tools",
 }
 
 

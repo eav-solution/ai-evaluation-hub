@@ -610,6 +610,197 @@ def test_create_endpoint_run_requires_config(client, auth_headers, db, monkeypat
     assert response.status_code == 422
 
 
+def test_create_static_agent_loop_run_without_judge(
+    client, auth_headers, db, monkeypatch
+):
+    from app.models import Run
+
+    workspace, dataset, _ = _ready_dataset(
+        db,
+        provider=None,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "agent_trace": "trace",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Loop check",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.agent_loop_detection"}],
+            "judge": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["judge_config"] == {}
+    stored = db.get(Run, response.json()["id"])
+    assert stored.definition_snapshot["sample"]["kind"] == "agent_trace"
+    assert stored.definition_snapshot["resources"] == {}
+
+
+def test_create_tool_correctness_run_without_judge(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, _ = _ready_dataset(
+        db,
+        provider=None,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "agent_trace": "trace",
+            "tools_called": "called",
+            "expected_tools": "expected",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Tool check",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.tool_correctness"}],
+            "judge": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+
+
+def test_create_task_completion_run_requires_judge(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, _ = _ready_dataset(
+        db,
+        provider=None,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "agent_trace": "trace",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Completion check",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.task_completion"}],
+            "judge": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "judge connection" in response.json()["detail"].lower()
+
+
+def test_create_run_rejects_mixed_sample_kinds(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "agent_trace": "trace",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Mixed samples",
+            "mode": "static",
+            "metrics": [
+                {"key": "deepeval.agent_loop_detection"},
+                {"key": "deepeval.bias"},
+            ],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "separate run" in response.json()["detail"].lower()
+
+
+def test_create_endpoint_agent_run_uses_named_trace_and_tool_mappings(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, _ = _ready_dataset(
+        db, provider=None, schema_map={"input": "prompt"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Endpoint tools",
+            "mode": "endpoint",
+            "metrics": [{"key": "deepeval.tool_correctness"}],
+            "judge": None,
+            "endpoint_config": {
+                "url": "https://example.com/agent",
+                "response_mappings": {
+                    "actual_output": "$.answer",
+                    "agent_trace": "$.trace",
+                    "tools_called": "$.called",
+                    "expected_tools": "$.expected",
+                },
+            },
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+
+
+def test_create_agent_run_rejects_missing_structured_mapping(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, _ = _ready_dataset(
+        db,
+        provider=None,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "agent_trace": "trace",
+            "tools_called": "called",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Missing expected tools",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.tool_correctness"}],
+            "judge": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "expected_tools" in response.json()["detail"]
+
+
 def _custom_connection(db, workspace_id, name="Gateway", key=None):
     from app.models import ProviderConnection
     from app.security import encrypt_secret

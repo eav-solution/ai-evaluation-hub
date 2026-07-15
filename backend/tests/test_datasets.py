@@ -124,6 +124,40 @@ def test_dataset_schema_map_accepts_canonical_and_legacy_context_fields(
     assert unknown.status_code == 422
 
 
+def test_dataset_schema_map_accepts_agentic_structured_fields(
+    client, auth_headers, object_store
+):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    uploaded = client.post(
+        f"/api/workspaces/{workspace_id}/datasets",
+        data={"name": "Agent traces"},
+        files={
+            "file": (
+                "agent.json",
+                b'[{"prompt":"q","answer":"a","trace":[],"called":[],"expected":[]}]',
+                "application/json",
+            )
+        },
+        headers=auth_headers,
+    ).json()
+
+    response = client.patch(
+        f"/api/workspaces/{workspace_id}/datasets/{uploaded['id']}/schema-map",
+        json={
+            "schema_map": {
+                "input": "prompt",
+                "actual_output": "answer",
+                "agent_trace": "trace",
+                "tools_called": "called",
+                "expected_tools": "expected",
+            }
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+
+
 def test_nonmember_cannot_access_dataset(client, auth_headers, object_store):
     workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
     token = client.post(
