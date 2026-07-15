@@ -174,7 +174,9 @@ describe("RunReport metric information", () => {
     const {unmount} = render(<RunReport workspaceId="workspace-1" runId="run-1" />);
 
     await screen.findByText("RAG benchmark");
-    fireEvent.click(screen.getByText("Result metadata"));
+    expect(fetchMock).not.toHaveBeenCalled();
+    const metadataSummary = screen.getByText("Result metadata");
+    fireEvent.click(metadataSummary);
     expect(screen.getByText("Input blocks")).toBeInTheDocument();
     expect(screen.getByText("Output blocks")).toBeInTheDocument();
     expect(screen.getAllByText("Describe the chart")).toHaveLength(2);
@@ -183,11 +185,17 @@ describe("RunReport metric information", () => {
     expect(image).toHaveAttribute("src", "blob:mock");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/workspaces/workspace-1/assets/asset-input",
-      {headers: {Authorization: "Bearer report-token"}},
+      {
+        headers: {Authorization: "Bearer report-token"},
+        signal: expect.any(AbortSignal),
+      },
     );
 
-    unmount();
+    fireEvent.click(metadataSummary);
+    expect(screen.queryByRole("img", {name: "result image"})).not.toBeInTheDocument();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+
+    unmount();
   });
 
   it("opens catalog information from a summary card", async () => {

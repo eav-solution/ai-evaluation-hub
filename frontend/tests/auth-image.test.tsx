@@ -41,6 +41,7 @@ describe("AuthImage", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/assets/asset-1", {
       headers: {Authorization: "Bearer asset-token"},
+      signal: expect.any(AbortSignal),
     });
 
     unmount();
@@ -80,5 +81,19 @@ describe("AuthImage", () => {
 
     resolveThird(response(true));
     await waitFor(() => expect(screen.getByRole("img", {name: "Result"})).toBeInTheDocument());
+  });
+
+  it("aborts a pending asset request on unmount", () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((_path, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Promise(() => undefined);
+    }));
+
+    const {unmount} = render(<AuthImage path="/api/assets/pending" alt="Pending" />);
+    expect(signal?.aborted).toBe(false);
+
+    unmount();
+    expect(signal?.aborted).toBe(true);
   });
 });

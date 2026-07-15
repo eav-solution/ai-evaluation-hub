@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useState, type ReactNode} from "react";
 import {
   Bar,
   BarChart,
@@ -50,6 +50,31 @@ function ContentBlocks({blocks, workspaceId}: {blocks: unknown; workspaceId: str
         alt="result image"
       />
     ),
+  );
+}
+
+function LazyDetails({
+  children,
+  className,
+  summary,
+}: {
+  children: ReactNode;
+  className?: string;
+  summary: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className={className} open={open}>
+      <summary
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((current) => !current);
+        }}
+      >
+        {summary}
+      </summary>
+      {open && children}
+    </details>
   );
 }
 
@@ -479,8 +504,7 @@ export function RunReport({
                         </details>
                       )}
                       {hasMetadata && (
-                        <details className="result-metadata">
-                          <summary>Result metadata</summary>
+                        <LazyDetails className="result-metadata" summary="Result metadata">
                           <div className="result-metadata-body">
                             {detailView.trustedContext !== null && (
                               <div>
@@ -569,7 +593,7 @@ export function RunReport({
                               </div>
                             )}
                           </div>
-                        </details>
+                        </LazyDetails>
                       )}
                     </td>
                     {metricKeys.map((key) => {

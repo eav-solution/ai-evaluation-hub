@@ -9,11 +9,15 @@ export function AuthImage({path, alt}: {path: string; alt: string}) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    const controller = new AbortController();
     let createdUrl: string | null = null;
     let cancelled = false;
     setObjectUrl(null);
     setFailed(false);
-    fetch(path, {headers: {Authorization: `Bearer ${getToken() ?? ""}`}})
+    fetch(path, {
+      headers: {Authorization: `Bearer ${getToken() ?? ""}`},
+      signal: controller.signal,
+    })
       .then((response) => {
         if (!response.ok) throw new Error(String(response.status));
         return response.blob();
@@ -28,6 +32,7 @@ export function AuthImage({path, alt}: {path: string; alt: string}) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   }, [path]);
