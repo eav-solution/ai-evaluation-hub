@@ -66,6 +66,18 @@ describe("DatasetsPage", () => {
             sample_kind: "conversation",
             requires: ["turns", "mcp_metadata"],
           },
+          {
+            key: "deepeval.image_coherence",
+            category: "general",
+            sample_kind: "multimodal",
+            requires: ["input", "actual_output"],
+          },
+          {
+            key: "deepeval.image_helpfulness",
+            category: "general",
+            sample_kind: "multimodal",
+            requires: ["input", "actual_output"],
+          },
         ] as never;
       }
       if (path === "/api/workspaces/workspace-1/datasets") {
@@ -138,12 +150,12 @@ describe("DatasetsPage", () => {
     expect(within(ragRow as HTMLElement).getByText("RAG")).toBeInTheDocument();
     expect(within(ragRow as HTMLElement).getByText("3 compatible metrics")).toBeInTheDocument();
     expect(within(generalRow as HTMLElement).getByText("General")).toBeInTheDocument();
-    expect(within(generalRow as HTMLElement).getByText("2 compatible metrics")).toBeInTheDocument();
+    expect(within(generalRow as HTMLElement).getByText("4 compatible metrics")).toBeInTheDocument();
     const agentRow = screen.getByText("Agent traces").closest(".dataset-row");
     expect(agentRow).not.toBeNull();
     expect(within(agentRow as HTMLElement).getByText("Agentic")).toBeInTheDocument();
     expect(within(agentRow as HTMLElement).getByText("General")).toBeInTheDocument();
-    expect(within(agentRow as HTMLElement).getByText("4 compatible metrics")).toBeInTheDocument();
+    expect(within(agentRow as HTMLElement).getByText("6 compatible metrics")).toBeInTheDocument();
     const conversationRow = screen.getByText("Support chats").closest(".dataset-row");
     const mcpRow = screen.getByText("MCP chats").closest(".dataset-row");
     expect(

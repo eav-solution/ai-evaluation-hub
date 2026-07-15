@@ -232,6 +232,38 @@ def test_conversation_exports_keep_typed_details_and_csv_score_columns(
     ]
 
 
+def test_multimodal_html_export_lists_blocks_without_embedding_images(
+    client, auth_headers, db
+):
+    from app.reports import render_html
+
+    _workspace, run, summaries, results = _completed_run(db)
+    results[0].details = {
+        "sample": {
+            "kind": "multimodal",
+            "input": [
+                {"type": "text", "text": "Describe the chart"},
+                {"type": "image", "asset_id": "asset-input"},
+            ],
+            "actual_output": [
+                {"type": "text", "text": "Revenue rises."},
+                {"type": "image", "asset_id": "asset-output"},
+            ],
+            "normalizer_revision": "1",
+        }
+    }
+    db.commit()
+
+    html = render_html(run, summaries, results)
+
+    assert "Input blocks" in html
+    assert "Output blocks" in html
+    assert "asset-input" in html
+    assert "asset-output" in html
+    assert "<img" not in html
+    assert "base64" not in html
+
+
 def test_export_download_routes(client, auth_headers, db):
     workspace, run, _summaries, _results = _completed_run(db)
     base = f"/api/workspaces/{workspace.id}/runs/{run.id}"

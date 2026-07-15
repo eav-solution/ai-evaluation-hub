@@ -59,10 +59,34 @@ def _result_detail_view(details: dict | None) -> dict:
             "chatbot_role": None,
             "conversation_context": None,
             "mcp_events": None,
+            "input_blocks": None,
+            "output_blocks": None,
             "other_details": details or None,
         }
 
     trusted_context = sample.get("context")
+    if sample.get("kind") == "multimodal":
+        typed_fields = {
+            "kind",
+            "input",
+            "actual_output",
+            "normalizer_revision",
+        }
+        return {
+            "trusted_context": None,
+            "agent_trace": None,
+            "tools_called": None,
+            "expected_tools": None,
+            "turns": None,
+            "chatbot_role": None,
+            "conversation_context": None,
+            "mcp_events": None,
+            "input_blocks": sample.get("input"),
+            "output_blocks": sample.get("actual_output"),
+            "other_details": _other_result_details(
+                details, sample, typed_fields
+            ),
+        }
     if sample.get("kind") == "conversation":
         typed_fields = {
             "kind",
@@ -88,6 +112,8 @@ def _result_detail_view(details: dict | None) -> dict:
             "chatbot_role": sample.get("chatbot_role"),
             "conversation_context": sample.get("conversation_context") or None,
             "mcp_events": sample.get("mcp_events") or None,
+            "input_blocks": None,
+            "output_blocks": None,
             "other_details": _other_result_details(
                 details,
                 sample,
@@ -105,6 +131,8 @@ def _result_detail_view(details: dict | None) -> dict:
             "chatbot_role": None,
             "conversation_context": None,
             "mcp_events": None,
+            "input_blocks": None,
+            "output_blocks": None,
             "other_details": details,
         }
 
@@ -125,6 +153,8 @@ def _result_detail_view(details: dict | None) -> dict:
         "chatbot_role": None,
         "conversation_context": None,
         "mcp_events": None,
+        "input_blocks": None,
+        "output_blocks": None,
         "other_details": _other_result_details(details, sample, typed_fields),
     }
 

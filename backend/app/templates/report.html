@@ -85,13 +85,19 @@
             {{ row.actual or "" }}
             {% if row.contexts %}<details><summary>Contexts</summary><pre>{{ row.contexts|tojson(indent=2) }}</pre></details>{% endif %}
             {% set detail = detail_views.get(row.id) %}
-            {% if detail.trusted_context is not none or detail.agent_trace is not none or detail.tools_called is not none or detail.expected_tools is not none or detail.turns is not none or detail.chatbot_role is not none or detail.conversation_context is not none or detail.mcp_events is not none or detail.other_details is not none or row.usage is not none or row.estimated_cost is not none %}
+            {% if detail.trusted_context is not none or detail.agent_trace is not none or detail.tools_called is not none or detail.expected_tools is not none or detail.turns is not none or detail.chatbot_role is not none or detail.conversation_context is not none or detail.mcp_events is not none or detail.input_blocks is not none or detail.output_blocks is not none or detail.other_details is not none or row.usage is not none or row.estimated_cost is not none %}
             <details>
               <summary>Result metadata</summary>
               {% if detail.trusted_context is not none %}
               <strong>Trusted context</strong>
               <pre>{% for item in detail.trusted_context %}{{ item }}{% if not loop.last %}
 {% endif %}{% endfor %}</pre>
+              {% endif %}
+              {% if detail.input_blocks is not none %}
+              <strong>Input blocks</strong><pre>{{ detail.input_blocks|tojson(indent=2) }}</pre>
+              {% endif %}
+              {% if detail.output_blocks is not none %}
+              <strong>Output blocks</strong><pre>{{ detail.output_blocks|tojson(indent=2) }}</pre>
               {% endif %}
               {% if detail.agent_trace is not none %}
               <strong>Agent trace</strong><pre>{{ detail.agent_trace|tojson(indent=2) }}</pre>

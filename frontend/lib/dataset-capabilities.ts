@@ -38,7 +38,10 @@ export function compatibleMetricCount(dataset: Dataset, metrics: Metric[]) {
     (metric) =>
       (metric.sample_kind === "single_turn" ||
         (metric.sample_kind === "agent_trace" && fields.has("agent_trace")) ||
-        (metric.sample_kind === "conversation" && fields.has("turns"))) &&
+        (metric.sample_kind === "conversation" && fields.has("turns")) ||
+        (metric.sample_kind === "multimodal" &&
+          fields.has("input") &&
+          fields.has("actual_output"))) &&
       missingMetricRequirements(metric, fields).length === 0,
   ).length;
 }

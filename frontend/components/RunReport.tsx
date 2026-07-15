@@ -17,11 +17,40 @@ import {
 } from "recharts";
 
 import {api, download} from "@/lib/api";
+import {AuthImage} from "@/components/AuthImage";
 import {MetricInfoButton, MetricInfoModal} from "@/components/MetricInfoModal";
 import type {Metric, Run, RunResult} from "@/lib/types";
 
 export function metricLabel(metricsByKey: Map<string, Metric>, key: string): string {
   return metricsByKey.get(key)?.display_name ?? key;
+}
+
+type ResultContentBlock =
+  | {type: "text"; text: string}
+  | {type: "image"; asset_id: string};
+
+function isResultContentBlock(block: unknown): block is ResultContentBlock {
+  if (!block || typeof block !== "object" || Array.isArray(block)) return false;
+  const value = block as Record<string, unknown>;
+  return (
+    (value.type === "text" && typeof value.text === "string") ||
+    (value.type === "image" && typeof value.asset_id === "string")
+  );
+}
+
+function ContentBlocks({blocks, workspaceId}: {blocks: unknown; workspaceId: string}) {
+  if (!Array.isArray(blocks)) return null;
+  return blocks.filter(isResultContentBlock).map((block, index) =>
+    block.type === "text" ? (
+      <p key={`text-${index}`}>{block.text}</p>
+    ) : (
+      <AuthImage
+        key={`image-${index}`}
+        path={`/api/workspaces/${workspaceId}/assets/${block.asset_id}`}
+        alt="result image"
+      />
+    ),
+  );
 }
 
 function filteredOtherDetails(
@@ -68,12 +97,34 @@ function resultDetailView(details: Record<string, unknown> | null) {
       chatbotRole: null,
       conversationContext: null,
       mcpEvents: null,
+      inputBlocks: null,
+      outputBlocks: null,
       otherDetails: details && Object.keys(details).length ? details : null,
     };
   }
 
   const fields = sample as Record<string, unknown>;
   const trustedContext = fields.context ?? null;
+  if (fields.kind === "multimodal") {
+    return {
+      trustedContext: null,
+      agentTrace: null,
+      toolsCalled: null,
+      expectedTools: null,
+      turns: null,
+      chatbotRole: null,
+      conversationContext: null,
+      mcpEvents: null,
+      inputBlocks: fields.input ?? null,
+      outputBlocks: fields.actual_output ?? null,
+      otherDetails: filteredOtherDetails(details, fields, [
+        "kind",
+        "input",
+        "actual_output",
+        "normalizer_revision",
+      ]),
+    };
+  }
   if (fields.kind === "conversation") {
     const mcpMetadata = fields.mcp_metadata;
     const keepMcpMetadata =
@@ -97,6 +148,8 @@ function resultDetailView(details: Record<string, unknown> | null) {
         Array.isArray(fields.mcp_events) && !fields.mcp_events.length
           ? null
           : fields.mcp_events ?? null,
+      inputBlocks: null,
+      outputBlocks: null,
       otherDetails: filteredOtherDetails(
         details,
         fields,
@@ -123,6 +176,8 @@ function resultDetailView(details: Record<string, unknown> | null) {
       chatbotRole: null,
       conversationContext: null,
       mcpEvents: null,
+      inputBlocks: null,
+      outputBlocks: null,
       otherDetails: details,
     };
   }
@@ -136,6 +191,8 @@ function resultDetailView(details: Record<string, unknown> | null) {
     chatbotRole: null,
     conversationContext: null,
     mcpEvents: null,
+    inputBlocks: null,
+    outputBlocks: null,
     otherDetails: filteredOtherDetails(details, fields, [
       "kind",
       "context",
@@ -403,6 +460,8 @@ export function RunReport({
                   detailView.chatbotRole !== null ||
                   detailView.conversationContext !== null ||
                   detailView.mcpEvents !== null ||
+                  detailView.inputBlocks !== null ||
+                  detailView.outputBlocks !== null ||
                   detailView.otherDetails !== null ||
                   row.usage !== null ||
                   row.estimated_cost !== null;
@@ -427,6 +486,24 @@ export function RunReport({
                               <div>
                                 <strong>Trusted context</strong>
                                 <pre>{JSON.stringify(detailView.trustedContext, null, 2)}</pre>
+                              </div>
+                            )}
+                            {detailView.inputBlocks !== null && (
+                              <div>
+                                <strong>Input blocks</strong>
+                                <ContentBlocks
+                                  blocks={detailView.inputBlocks}
+                                  workspaceId={workspaceId}
+                                />
+                              </div>
+                            )}
+                            {detailView.outputBlocks !== null && (
+                              <div>
+                                <strong>Output blocks</strong>
+                                <ContentBlocks
+                                  blocks={detailView.outputBlocks}
+                                  workspaceId={workspaceId}
+                                />
                               </div>
                             )}
                             {detailView.agentTrace !== null && (

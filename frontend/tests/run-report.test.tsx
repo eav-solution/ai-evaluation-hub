@@ -3,10 +3,10 @@ import {fireEvent, render, screen, waitFor, within} from "@testing-library/react
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
 import {RunReport, metricLabel} from "@/components/RunReport";
-import {api} from "@/lib/api";
+import {api, getToken} from "@/lib/api";
 import type {Metric, Run, RunResult} from "@/lib/types";
 
-vi.mock("@/lib/api", () => ({api: vi.fn(), download: vi.fn()}));
+vi.mock("@/lib/api", () => ({api: vi.fn(), download: vi.fn(), getToken: vi.fn()}));
 vi.mock("recharts", () => {
   const Box = ({children}: PropsWithChildren) => <div>{children}</div>;
   const Chart = ({children, data}: PropsWithChildren<{data?: unknown}>) => (
@@ -30,6 +30,7 @@ vi.mock("recharts", () => {
 });
 
 const mockedApi = vi.mocked(api);
+const mockedGetToken = vi.mocked(getToken);
 const metric: Metric = {
   key: "ragas.faithfulness",
   revision: "1",
@@ -77,6 +78,7 @@ const run: Run = {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  mockedGetToken.mockReturnValue("report-token");
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
     value: vi.fn(function (this: HTMLDialogElement) {
@@ -143,6 +145,51 @@ describe("metricLabel", () => {
 });
 
 describe("RunReport metric information", () => {
+  it("renders typed multimodal blocks through authenticated object URLs", async () => {
+    const createObjectURL = vi.fn(() => "blob:mock");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {configurable: true, value: createObjectURL});
+    Object.defineProperty(URL, "revokeObjectURL", {configurable: true, value: revokeObjectURL});
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(["image"])),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const multimodalResult: RunResult = {
+      ...result(0, "Describe the chart", 1),
+      actual: "Revenue rises.",
+      details: {
+        sample: {
+          kind: "multimodal",
+          input: [
+            {type: "text", text: "Describe the chart"},
+            {type: "image", asset_id: "asset-input"},
+          ],
+          actual_output: [{type: "text", text: "Revenue rises."}],
+          normalizer_revision: "1",
+        },
+      },
+    };
+    mockReportApi(Promise.resolve([metric]), run, [multimodalResult]);
+    const {unmount} = render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    fireEvent.click(screen.getByText("Result metadata"));
+    expect(screen.getByText("Input blocks")).toBeInTheDocument();
+    expect(screen.getByText("Output blocks")).toBeInTheDocument();
+    expect(screen.getAllByText("Describe the chart")).toHaveLength(2);
+    expect(screen.getAllByText("Revenue rises.")).toHaveLength(2);
+    const image = await screen.findByRole("img", {name: "result image"});
+    expect(image).toHaveAttribute("src", "blob:mock");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/workspaces/workspace-1/assets/asset-input",
+      {headers: {Authorization: "Bearer report-token"}},
+    );
+
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+  });
+
   it("opens catalog information from a summary card", async () => {
     mockReportApi(Promise.resolve([metric]));
     render(<RunReport workspaceId="workspace-1" runId="run-1" />);

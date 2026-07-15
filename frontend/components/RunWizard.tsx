@@ -100,6 +100,7 @@ export function RunWizard({
   const [mcpEventsJsonpath, setMcpEventsJsonpath] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [visionConfirmed, setVisionConfirmed] = useState(false);
 
   useEffect(() => {
     if (!initialDatasets) {
@@ -178,6 +179,10 @@ export function RunWizard({
       cancelled = true;
     };
   }, [connection?.id, connection?.connection_type, workspaceId, modelsReload]);
+
+  useEffect(() => {
+    setVisionConfirmed(false);
+  }, [connectionId, model]);
 
   // Load models for the (separate) embedding connection when it is custom.
   useEffect(() => {
@@ -317,6 +322,7 @@ export function RunWizard({
       presetMetrics.length !== preset.metric_keys.length ||
       presetMetrics.some(
         (metric) =>
+          (mode === "endpoint" && metric.sample_kind === "multimodal") ||
           missingRequirements(
             metric,
             dataset,
@@ -486,7 +492,10 @@ export function RunWizard({
                       const sampleKindConflict = Boolean(
                         selectedSampleKind && metric.sample_kind !== selectedSampleKind,
                       );
-                      const disabled = sampleKindConflict || missing.length > 0;
+                      const endpointIncompatible =
+                        mode === "endpoint" && metric.sample_kind === "multimodal";
+                      const disabled =
+                        endpointIncompatible || sampleKindConflict || missing.length > 0;
                       return (
                         <div
                           className={`metric-card ${disabled ? "disabled" : ""}`}
@@ -510,7 +519,9 @@ export function RunWizard({
                               <strong>{metric.display_name}</strong>
                               <small>{metric.description}</small>
                             </span>
-                            {sampleKindConflict ? (
+                            {endpointIncompatible ? (
+                              <em>Static datasets or ingestion</em>
+                            ) : sampleKindConflict ? (
                               <em>Choose in a separate run</em>
                             ) : missing.length > 0 && (
                               <em>Needs mapping: {missing.join(", ")}</em>
@@ -725,6 +736,16 @@ export function RunWizard({
             </>
           )}
         </div>
+        {selectedResources.has("multimodal") && isCustom && (
+          <label className="config-checkbox">
+            <input
+              type="checkbox"
+              checked={visionConfirmed}
+              onChange={(event) => setVisionConfirmed(event.target.checked)}
+            />
+            This model accepts images
+          </label>
+        )}
         {error && <p className="notice error">{error}</p>}
         <button
           className="primary"
@@ -735,8 +756,10 @@ export function RunWizard({
             !staticReady ||
             selectedHaveMissingRequirements ||
             selectedConfigInvalid ||
+            (mode === "endpoint" && selectedSampleKind === "multimodal") ||
             (needsJudge && (!connectionId || !model)) ||
             (needsJudge && isCustom && Boolean(modelsError)) ||
+            (selectedResources.has("multimodal") && isCustom && !visionConfirmed) ||
             (needsEmbedding && (!embeddingConnectionId || !embeddingModel)) ||
             (needsEmbedding && embeddingIsCustom && Boolean(embeddingModelsError))
           }

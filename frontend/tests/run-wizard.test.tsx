@@ -57,6 +57,19 @@ const customConnection: ProviderConnection = {
   key_hint: null,
 };
 
+const secondCustomConnection: ProviderConnection = {
+  ...customConnection,
+  id: "conn-custom-2",
+  name: "Second gateway",
+};
+
+const anthropicConnection: ProviderConnection = {
+  ...nativeConnection,
+  id: "conn-anthropic",
+  name: "Anthropic",
+  connection_type: "anthropic",
+};
+
 const biasMetric: Metric = {
   key: "deepeval.bias",
   revision: "1",
@@ -274,6 +287,33 @@ const roleAdherence: Metric = {
   requires: ["turns", "chatbot_role"],
 };
 
+const imageCoherence: Metric = {
+  ...biasMetric,
+  key: "deepeval.image_coherence",
+  family: "multimodal",
+  display_name: "Image Coherence",
+  description: "Images fit the surrounding text",
+  sample_kind: "multimodal",
+  requires: ["input", "actual_output"],
+  resources: ["judge", "multimodal"],
+};
+
+const imageHelpfulness: Metric = {
+  ...imageCoherence,
+  key: "deepeval.image_helpfulness",
+  display_name: "Image Helpfulness",
+  description: "Images help answer the request",
+};
+
+const multimodalPreset = {
+  id: "multimodal",
+  display_name: "Multimodal",
+  description: "Core image checks",
+  category: "general" as const,
+  mode_hint: "static" as const,
+  metric_keys: [imageCoherence.key, imageHelpfulness.key],
+};
+
 beforeEach(() => {
   mockedApi.mockReset();
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -299,6 +339,125 @@ beforeEach(() => {
 });
 
 describe("RunWizard", () => {
+  it("enables both multimodal cards for mapped static datasets", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[imageCoherence, imageHelpfulness]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    expect(screen.getByRole("heading", {name: "Multimodal"})).toHaveClass(
+      "metric-family-heading",
+    );
+    expect(screen.getByLabelText("Image Coherence")).toBeEnabled();
+    expect(screen.getByLabelText("Image Helpfulness")).toBeEnabled();
+  });
+
+  it("disables multimodal cards with the static-only reason in endpoint mode", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[imageCoherence, imageHelpfulness]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Image Coherence"));
+    fireEvent.click(screen.getByLabelText("Live endpoint"));
+
+    expect(screen.getByLabelText("Image Coherence")).toBeDisabled();
+    expect(screen.getByLabelText("Image Helpfulness")).toBeDisabled();
+    expect(screen.getAllByText("Static datasets or ingestion")).toHaveLength(2);
+    expect(screen.getByRole("button", {name: "Launch evaluation"})).toBeDisabled();
+  });
+
+  it("requires and resets vision confirmation for custom models and connections", async () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[imageCoherence]}
+        initialConnections={[customConnection, secondCustomConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Image Coherence"));
+    await waitFor(() => expect(screen.getByLabelText("LLM Model")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("LLM Model"));
+    fireEvent.click(screen.getByRole("option", {name: "chat-a"}));
+
+    const launch = screen.getByRole("button", {name: "Launch evaluation"});
+    const vision = screen.getByLabelText("This model accepts images");
+    expect(launch).toBeDisabled();
+    fireEvent.click(vision);
+    expect(launch).toBeEnabled();
+
+    fireEvent.click(screen.getByLabelText("LLM Model"));
+    fireEvent.click(screen.getByRole("option", {name: "chat-b"}));
+    expect(vision).not.toBeChecked();
+    expect(launch).toBeDisabled();
+
+    fireEvent.click(vision);
+    fireEvent.change(screen.getByLabelText("LLM Connection"), {
+      target: {value: secondCustomConnection.id},
+    });
+    expect(vision).not.toBeChecked();
+  });
+
+  it("does not ask native OpenAI or Anthropic connections for vision confirmation", () => {
+    const {unmount} = render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[imageCoherence]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Image Coherence"));
+    expect(screen.queryByLabelText("This model accepts images")).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[imageCoherence]}
+        initialConnections={[anthropicConnection]}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Image Coherence"));
+    expect(screen.queryByLabelText("This model accepts images")).not.toBeInTheDocument();
+  });
+
+  it("applies the Multimodal preset with exactly the two image metrics", async () => {
+    mockedApi.mockImplementation((path: string) => {
+      if (path === "/api/metrics/presets") {
+        return Promise.resolve([multimodalPreset]) as never;
+      }
+      return Promise.resolve({id: "run-1"}) as never;
+    });
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[imageCoherence, imageHelpfulness, biasMetric]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByTitle("Core image checks"));
+
+    const picker = screen.getByTestId("metric-picker");
+    expect(within(picker).getByLabelText("Image Coherence")).toBeChecked();
+    expect(within(picker).getByLabelText("Image Helpfulness")).toBeChecked();
+    expect(within(picker).getByLabelText("Bias")).not.toBeChecked();
+    expect(within(picker).getAllByRole("checkbox", {checked: true})).toHaveLength(2);
+  });
+
   it("keeps every metric framework on a fixed five-column grid", () => {
     const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
 
