@@ -174,6 +174,19 @@ def _validate_metric_selection(
             status_code=422,
             detail="Metrics with different sample kinds need a separate run",
         )
+    sample_kind = next(iter(sample_kinds))
+    sample_requirements = {
+        "agent_trace": {"agent_trace"},
+        "conversation": {"turns"},
+        "multimodal": {"input", "actual_output"},
+    }.get(sample_kind, set())
+    missing_sample_fields = sample_requirements - available_fields
+    if missing_sample_fields:
+        field = sorted(missing_sample_fields)[0]
+        raise HTTPException(
+            status_code=422,
+            detail=f"{sample_kind} samples need a {field} column",
+        )
 
     resource_roles: set[ResourceRole] = set()
     for adapter, config in selected:
@@ -186,7 +199,7 @@ def _validate_metric_selection(
             )
         resource_roles.update(adapter.resources(config))
 
-    return selected, frozenset(resource_roles), next(iter(sample_kinds))
+    return selected, frozenset(resource_roles), sample_kind
 
 
 @router.post("", status_code=201)

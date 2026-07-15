@@ -801,6 +801,37 @@ def test_create_agent_run_rejects_missing_structured_mapping(
     assert "expected_tools" in response.json()["detail"]
 
 
+def test_create_tool_run_also_requires_the_agent_trace_sample_field(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, _ = _ready_dataset(
+        db,
+        provider=None,
+        schema_map={
+            "input": "prompt",
+            "actual_output": "answer",
+            "tools_called": "called",
+            "expected_tools": "expected",
+        },
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Missing trace",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.tool_correctness"}],
+            "judge": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "agent_trace" in response.json()["detail"]
+
+
 def _custom_connection(db, workspace_id, name="Gateway", key=None):
     from app.models import ProviderConnection
     from app.security import encrypt_secret
