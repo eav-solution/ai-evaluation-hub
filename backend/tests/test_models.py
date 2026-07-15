@@ -186,6 +186,71 @@ def test_artifact_idempotency_key_is_unique_per_workspace(db):
         db.commit()
 
 
+def test_evaluation_asset_roundtrip_is_workspace_scoped(db):
+    from app.models import EvaluationAsset, User, Workspace
+
+    user = User(email="asset-model@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Asset model", owner_id=user.id)
+    other_workspace = Workspace(name="Other assets", owner_id=user.id)
+    db.add_all([workspace, other_workspace])
+    db.flush()
+    asset = EvaluationAsset(
+        workspace_id=workspace.id,
+        mime_type="image/png",
+        byte_size=12,
+        source_url="https://example.com/image.png",
+        storage_path=f"image-assets/{workspace.id}/asset-1",
+    )
+    db.add(asset)
+    db.commit()
+
+    saved = db.query(EvaluationAsset).filter_by(workspace_id=workspace.id).one()
+    assert saved.id == asset.id
+    assert saved.mime_type == "image/png"
+    assert saved.byte_size == 12
+    assert saved.source_url == "https://example.com/image.png"
+    assert (
+        db.query(EvaluationAsset)
+        .filter_by(workspace_id=other_workspace.id)
+        .first()
+        is None
+    )
+
+
+def test_evaluation_asset_storage_path_is_unique(db):
+    import sqlalchemy as sa
+
+    from app.models import EvaluationAsset, User, Workspace
+
+    user = User(email="asset-path@example.com", password_hash="x")
+    db.add(user)
+    db.flush()
+    workspace = Workspace(name="Asset paths", owner_id=user.id)
+    db.add(workspace)
+    db.flush()
+    db.add_all(
+        [
+            EvaluationAsset(
+                workspace_id=workspace.id,
+                mime_type="image/png",
+                byte_size=3,
+                storage_path="image-assets/shared/path",
+            ),
+            EvaluationAsset(
+                workspace_id=workspace.id,
+                mime_type="image/jpeg",
+                byte_size=4,
+                storage_path="image-assets/shared/path",
+            ),
+        ]
+    )
+
+    with pytest.raises(sa.exc.IntegrityError):
+        db.commit()
+
+
 def test_generation_models_roundtrip(db):
     from app.models import (
         Document,

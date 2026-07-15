@@ -127,6 +127,20 @@ class EvaluationArtifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class EvaluationAsset(Base):
+    __tablename__ = "evaluation_assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), index=True
+    )
+    mime_type: Mapped[str] = mapped_column(String(100))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    storage_path: Mapped[str] = mapped_column(String(1024), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (
