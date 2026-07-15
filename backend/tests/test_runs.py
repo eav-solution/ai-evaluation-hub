@@ -1279,3 +1279,156 @@ def test_create_run_embedding_connection_must_support_embeddings(
     )
     assert response.status_code == 422
     assert "OpenAI" in response.json()["detail"]
+
+
+def test_delete_ingestion_run_queues_all_owned_objects_before_removing_rows(
+    client, auth_headers, db, monkeypatch
+):
+    from app.models import (
+        EvaluationArtifact,
+        EvaluationAsset,
+        OutboxEvent,
+        Run,
+        RunResult,
+        RunSummary,
+        Workspace,
+    )
+
+    workspace = db.query(Workspace).filter_by(name="Default").one()
+    artifact = EvaluationArtifact(
+        workspace_id=workspace.id,
+        sample_kind="multimodal",
+        idempotency_key="delete-run",
+        request_hash="d" * 64,
+        storage_path=f"evaluation-artifacts/{workspace.id}/delete-run.json",
+    )
+    db.add(artifact)
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        artifact_id=artifact.id,
+        name="Delete ingestion run",
+        mode="ingestion",
+        metric_config={"metrics": []},
+        judge_config={},
+        status="completed",
+    )
+    db.add(run)
+    db.flush()
+    assets = [
+        EvaluationAsset(
+            workspace_id=workspace.id,
+            run_id=run.id,
+            mime_type="image/png",
+            byte_size=5,
+            source_url=f"https://images.example/{index}.png",
+            storage_path=f"image-assets/{workspace.id}/snapshot-{index}",
+        )
+        for index in range(2)
+    ]
+    db.add_all(assets)
+    db.add(
+        RunResult(
+            workspace_id=workspace.id,
+            run_id=run.id,
+            row_index=0,
+            input="image",
+            scores={},
+            details={"sample": {"input": [{"asset_id": assets[0].id}]}},
+        )
+    )
+    db.add(
+        RunSummary(
+            workspace_id=workspace.id,
+            run_id=run.id,
+            metric_key="test.image",
+            mean=1.0,
+            min=1.0,
+            max=1.0,
+            p50=1.0,
+            pass_rate=1.0,
+            threshold=0.5,
+        )
+    )
+    db.commit()
+    run_id = run.id
+    artifact_id = artifact.id
+    storage_paths = {artifact.storage_path, *(asset.storage_path for asset in assets)}
+    queued = []
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", queued.append)
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/runs/{run_id}", headers=auth_headers
+    )
+
+    assert response.status_code == 204
+    db.expire_all()
+    assert db.get(Run, run_id) is None
+    assert db.get(EvaluationArtifact, artifact_id) is None
+    assert db.query(RunResult).filter_by(run_id=run_id).count() == 0
+    assert db.query(RunSummary).filter_by(run_id=run_id).count() == 0
+    assert db.query(EvaluationAsset).filter_by(run_id=run_id).count() == 0
+    events = db.query(OutboxEvent).filter_by(kind="delete_object").all()
+    assert {event.payload["key"] for event in events} == storage_paths
+    assert set(queued) == {event.id for event in events}
+
+
+def test_delete_run_rejects_running_run(client, auth_headers, db):
+    from app.models import Run
+
+    workspace, dataset, _ = _ready_dataset(db, provider=None)
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Still running",
+        mode="static",
+        metric_config={"metrics": []},
+        judge_config={},
+        status="running",
+    )
+    db.add(run)
+    db.commit()
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/runs/{run.id}", headers=auth_headers
+    )
+
+    assert response.status_code == 409
+    assert db.get(Run, run.id) is not None
+
+
+def test_delete_pending_run_removes_evaluation_outbox_and_keeps_dataset(
+    client, auth_headers, db
+):
+    from app.models import Dataset, OutboxEvent, Run
+
+    workspace, dataset, _ = _ready_dataset(db, provider=None)
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Pending cleanup",
+        mode="static",
+        metric_config={"metrics": []},
+        judge_config={},
+        status="pending",
+    )
+    db.add(run)
+    db.flush()
+    event = OutboxEvent(
+        kind="evaluate_run",
+        dedupe_key=f"evaluation:{run.id}",
+        payload={"run_id": run.id},
+    )
+    db.add(event)
+    db.commit()
+    run_id, dataset_id, event_id = run.id, dataset.id, event.id
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/runs/{run_id}", headers=auth_headers
+    )
+
+    assert response.status_code == 204
+    db.expire_all()
+    assert db.get(Run, run_id) is None
+    assert db.get(Dataset, dataset_id) is not None
+    assert db.get(OutboxEvent, event_id) is None

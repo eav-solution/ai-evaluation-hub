@@ -1,8 +1,9 @@
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,8 @@ from app.evals.registry import METRICS
 from app.evals.snapshots import build_definition_snapshot
 from app.models import (
     Dataset,
+    EvaluationArtifact,
+    EvaluationAsset,
     OutboxEvent,
     ProviderConnection,
     Run,
@@ -127,8 +130,17 @@ def _run_out(row: Run, summaries: list[RunSummary] | None = None) -> dict:
     }
 
 
-def _get_run(run_id: str, workspace_id: str, db: Session) -> Run:
-    row = db.query(Run).filter_by(id=run_id, workspace_id=workspace_id).first()
+def _get_run(
+    run_id: str,
+    workspace_id: str,
+    db: Session,
+    *,
+    for_update: bool = False,
+) -> Run:
+    query = db.query(Run).filter_by(id=run_id, workspace_id=workspace_id)
+    if for_update:
+        query = query.with_for_update()
+    row = query.first()
     if row is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return row
@@ -417,6 +429,74 @@ def list_results(
         }
         for item in results
     ]
+
+
+@router.delete("/{run_id}", status_code=204)
+def delete_run(
+    run_id: str,
+    ws: Workspace = Depends(get_workspace),
+    db: Session = Depends(get_db),
+) -> Response:
+    row = _get_run(run_id, ws.id, db, for_update=True)
+    if row.status == "running":
+        raise HTTPException(status_code=409, detail="Running runs cannot be deleted")
+
+    artifact = None
+    if row.artifact_id is not None:
+        artifact = (
+            db.query(EvaluationArtifact)
+            .filter_by(id=row.artifact_id, workspace_id=ws.id)
+            .one()
+        )
+    assets = (
+        db.query(EvaluationAsset)
+        .filter_by(run_id=row.id, workspace_id=ws.id)
+        .all()
+    )
+    keys = [asset.storage_path for asset in assets]
+    if artifact is not None:
+        keys.append(artifact.storage_path)
+    events = [
+        OutboxEvent(
+            kind="delete_object",
+            dedupe_key=f"storage:{hashlib.sha256(key.encode()).hexdigest()}",
+            payload={"key": key},
+        )
+        for key in keys
+    ]
+    try:
+        db.add_all(events)
+        db.flush()
+        db.query(OutboxEvent).filter_by(
+            dedupe_key=f"evaluation:{row.id}"
+        ).delete(synchronize_session=False)
+        db.query(RunSummary).filter_by(
+            run_id=row.id, workspace_id=ws.id
+        ).delete(synchronize_session=False)
+        db.query(RunResult).filter_by(
+            run_id=row.id, workspace_id=ws.id
+        ).delete(synchronize_session=False)
+        db.query(EvaluationAsset).filter_by(
+            run_id=row.id, workspace_id=ws.id
+        ).delete(synchronize_session=False)
+        db.delete(row)
+        db.flush()
+        if artifact is not None:
+            db.delete(artifact)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    from app.tasks import dispatch_outbox_event
+
+    for event in events:
+        try:
+            dispatch_outbox_event(event.id)
+        except Exception:
+            logger.exception(
+                "Immediate run cleanup dispatch failed for run %s", run_id
+            )
+    return Response(status_code=204)
 
 
 @router.post("/{run_id}/cancel")

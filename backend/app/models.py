@@ -129,10 +129,25 @@ class EvaluationArtifact(Base):
 
 class EvaluationAsset(Base):
     __tablename__ = "evaluation_assets"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "source_url",
+            name="uq_evaluation_assets_run_source_url",
+        ),
+        CheckConstraint(
+            "(run_id IS NULL AND source_url IS NULL) OR "
+            "(run_id IS NOT NULL AND source_url IS NOT NULL)",
+            name="ck_evaluation_assets_owner_source",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     workspace_id: Mapped[str] = mapped_column(
         ForeignKey("workspaces.id"), index=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runs.id"), index=True, nullable=True
     )
     mime_type: Mapped[str] = mapped_column(String(100))
     byte_size: Mapped[int] = mapped_column(Integer)

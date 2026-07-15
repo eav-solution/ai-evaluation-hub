@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -106,6 +107,236 @@ def test_upload_cleans_up_storage_when_commit_fails(
     )
     assert response.status_code == 500
     assert deleted == list(stored)
+
+
+def _upload_image(client, workspace, auth_headers, stored, monkeypatch):
+    monkeypatch.setattr(storage, "put_object", stored.__setitem__)
+    monkeypatch.setattr(storage, "get_object", stored.__getitem__)
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/assets/images",
+        files={"file": ("a.png", b"\x89PNG bytes", "image/png")},
+        headers=auth_headers,
+    )
+    assert response.status_code == 201
+    return response.json()["asset_id"]
+
+
+def test_delete_unreferenced_upload_queues_durable_object_cleanup(
+    client, workspace, auth_headers, db, monkeypatch
+):
+    from app.models import EvaluationAsset, OutboxEvent
+
+    stored = {}
+    asset_id = _upload_image(
+        client, workspace, auth_headers, stored, monkeypatch
+    )
+    asset = db.get(EvaluationAsset, asset_id)
+    storage_path = asset.storage_path
+    queued = []
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", queued.append)
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/assets/{asset_id}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 204
+    db.expire_all()
+    assert db.get(EvaluationAsset, asset_id) is None
+    event = db.query(OutboxEvent).filter_by(kind="delete_object").one()
+    assert event.payload == {"key": storage_path}
+    assert queued == [event.id]
+
+
+def test_delete_upload_rejects_persisted_result_reference(
+    client, workspace, auth_headers, db, monkeypatch
+):
+    from app.models import Dataset, Run, RunResult
+
+    stored = {}
+    asset_id = _upload_image(
+        client, workspace, auth_headers, stored, monkeypatch
+    )
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Referenced upload",
+        format="json",
+        row_count=0,
+        storage_path=f"datasets/{workspace.id}/referenced.json",
+        schema_map={},
+    )
+    db.add(dataset)
+    db.flush()
+    stored[dataset.storage_path] = b"[]"
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="References upload",
+        mode="static",
+        metric_config={"metrics": []},
+        judge_config={},
+    )
+    db.add(run)
+    db.flush()
+    db.add(
+        RunResult(
+            workspace_id=workspace.id,
+            run_id=run.id,
+            row_index=0,
+            input="image",
+            scores={},
+            details={"sample": {"input": [{"type": "image", "asset_id": asset_id}]}},
+        )
+    )
+    db.commit()
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/assets/{asset_id}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    assert db.get(RunResult, db.query(RunResult.id).scalar()) is not None
+
+
+def test_delete_upload_rejects_dataset_payload_reference(
+    client, workspace, auth_headers, db, monkeypatch
+):
+    from app.models import Dataset
+
+    stored = {}
+    asset_id = _upload_image(
+        client, workspace, auth_headers, stored, monkeypatch
+    )
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Image rows",
+        format="json",
+        row_count=1,
+        storage_path=f"datasets/{workspace.id}/images.json",
+        schema_map={"actual_output": "answer"},
+    )
+    db.add(dataset)
+    db.commit()
+    stored[dataset.storage_path] = json.dumps(
+        [{"answer": [{"type": "image", "asset_id": asset_id}]}]
+    ).encode()
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/assets/{asset_id}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+
+
+def test_delete_upload_rejects_artifact_payload_reference(
+    client, workspace, auth_headers, db, monkeypatch
+):
+    from app.models import EvaluationArtifact
+
+    stored = {}
+    asset_id = _upload_image(
+        client, workspace, auth_headers, stored, monkeypatch
+    )
+    artifact = EvaluationArtifact(
+        workspace_id=workspace.id,
+        sample_kind="multimodal",
+        idempotency_key="asset-reference",
+        request_hash="a" * 64,
+        storage_path=f"evaluation-artifacts/{workspace.id}/asset-reference.json",
+    )
+    db.add(artifact)
+    db.commit()
+    stored[artifact.storage_path] = json.dumps(
+        {
+            "kind": "multimodal",
+            "input": [{"type": "image", "asset_id": asset_id}],
+        }
+    ).encode()
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/assets/{asset_id}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+
+
+def test_delete_upload_fails_closed_when_payload_cannot_be_verified(
+    client, workspace, auth_headers, db, monkeypatch
+):
+    from app.models import Dataset
+
+    stored = {}
+    asset_id = _upload_image(
+        client, workspace, auth_headers, stored, monkeypatch
+    )
+    db.add(
+        Dataset(
+            workspace_id=workspace.id,
+            name="Unavailable rows",
+            format="json",
+            row_count=1,
+            storage_path=f"datasets/{workspace.id}/missing.json",
+            schema_map={},
+        )
+    )
+    db.commit()
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/assets/{asset_id}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 503
+
+
+def test_delete_run_owned_asset_directly_is_forbidden(
+    client, workspace, auth_headers, db, monkeypatch
+):
+    from app.models import Dataset, EvaluationAsset, Run
+
+    stored = {}
+    monkeypatch.setattr(storage, "get_object", stored.__getitem__)
+    dataset = Dataset(
+        workspace_id=workspace.id,
+        name="Run-owned image",
+        format="json",
+        row_count=0,
+        storage_path=f"datasets/{workspace.id}/owned.json",
+        schema_map={},
+    )
+    db.add(dataset)
+    db.flush()
+    run = Run(
+        workspace_id=workspace.id,
+        dataset_id=dataset.id,
+        name="Owns snapshot",
+        mode="static",
+        metric_config={"metrics": []},
+        judge_config={},
+    )
+    db.add(run)
+    db.flush()
+    asset = EvaluationAsset(
+        workspace_id=workspace.id,
+        run_id=run.id,
+        mime_type="image/png",
+        byte_size=5,
+        source_url="https://images.example/owned.png",
+        storage_path=f"image-assets/{workspace.id}/owned",
+    )
+    db.add(asset)
+    db.commit()
+
+    response = client.delete(
+        f"/api/workspaces/{workspace.id}/assets/{asset.id}",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    assert db.get(EvaluationAsset, asset.id) is not None
 
 
 class _FakeStreamResponse:

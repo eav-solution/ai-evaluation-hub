@@ -22,14 +22,32 @@ def upgrade() -> None:
         "evaluation_assets",
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("workspace_id", sa.String(length=36), nullable=False),
+        sa.Column("run_id", sa.String(length=36), nullable=True),
         sa.Column("mime_type", sa.String(length=100), nullable=False),
         sa.Column("byte_size", sa.Integer(), nullable=False),
         sa.Column("source_url", sa.String(length=2048), nullable=True),
         sa.Column("storage_path", sa.String(length=1024), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "(run_id IS NULL AND source_url IS NULL) OR "
+            "(run_id IS NOT NULL AND source_url IS NOT NULL)",
+            name="ck_evaluation_assets_owner_source",
+        ),
+        sa.ForeignKeyConstraint(["run_id"], ["runs.id"]),
         sa.ForeignKeyConstraint(["workspace_id"], ["workspaces.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "run_id",
+            "source_url",
+            name="uq_evaluation_assets_run_source_url",
+        ),
         sa.UniqueConstraint("storage_path"),
+    )
+    op.create_index(
+        op.f("ix_evaluation_assets_run_id"),
+        "evaluation_assets",
+        ["run_id"],
+        unique=False,
     )
     op.create_index(
         op.f("ix_evaluation_assets_workspace_id"),
@@ -40,6 +58,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        op.f("ix_evaluation_assets_run_id"),
+        table_name="evaluation_assets",
+    )
     op.drop_index(
         op.f("ix_evaluation_assets_workspace_id"),
         table_name="evaluation_assets",

@@ -200,7 +200,6 @@ def test_evaluation_asset_roundtrip_is_workspace_scoped(db):
         workspace_id=workspace.id,
         mime_type="image/png",
         byte_size=12,
-        source_url="https://example.com/image.png",
         storage_path=f"image-assets/{workspace.id}/asset-1",
     )
     db.add(asset)
@@ -210,7 +209,8 @@ def test_evaluation_asset_roundtrip_is_workspace_scoped(db):
     assert saved.id == asset.id
     assert saved.mime_type == "image/png"
     assert saved.byte_size == 12
-    assert saved.source_url == "https://example.com/image.png"
+    assert saved.run_id is None
+    assert saved.source_url is None
     assert (
         db.query(EvaluationAsset)
         .filter_by(workspace_id=other_workspace.id)

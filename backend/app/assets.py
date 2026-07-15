@@ -189,14 +189,18 @@ def store_image_asset(
     data: bytes,
     mime_type: str,
     source_url: str | None = None,
+    run_id: str | None = None,
 ) -> EvaluationAsset:
     if mime_type not in ALLOWED_IMAGE_MIME_TYPES:
         raise ValueError(f"'{mime_type}' is not an allowed image type")
     if len(data) > MAX_IMAGE_BYTES:
         raise ValueError("Image exceeds the 5 MiB limit")
+    if (run_id is None) != (source_url is None):
+        raise ValueError("Remote image snapshots need a run owner and source URL")
     asset = EvaluationAsset(
         id=str(uuid.uuid4()),
         workspace_id=workspace_id,
+        run_id=run_id,
         mime_type=mime_type,
         byte_size=len(data),
         source_url=source_url,

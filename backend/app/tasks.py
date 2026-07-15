@@ -352,6 +352,7 @@ def _result_complete(result: RunResult, metric_keys: list[str]) -> bool:
 def _hydrate_image_blocks(
     db,
     workspace_id: str,
+    run_id: str,
     sample: EvaluationSample,
     url_cache: dict[str, str],
 ) -> None:
@@ -363,27 +364,38 @@ def _hydrate_image_blocks(
         if block.url and not block.asset_id:
             cached = url_cache.get(block.url)
             if cached is None:
-                data, mime_type = fetch_remote_image(block.url)
-                asset = store_image_asset(
-                    db,
-                    workspace_id,
-                    data,
-                    mime_type,
-                    source_url=block.url,
+                asset = (
+                    db.query(EvaluationAsset)
+                    .filter_by(
+                        workspace_id=workspace_id,
+                        run_id=run_id,
+                        source_url=block.url,
+                    )
+                    .first()
                 )
-                snapshot_path = asset_storage_path(workspace_id, asset.id)
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                if asset is None:
+                    data, mime_type = fetch_remote_image(block.url)
+                    asset = store_image_asset(
+                        db,
+                        workspace_id,
+                        data,
+                        mime_type,
+                        source_url=block.url,
+                        run_id=run_id,
+                    )
+                    snapshot_path = asset_storage_path(workspace_id, asset.id)
                     try:
-                        storage.delete_object(snapshot_path)
+                        db.commit()
                     except Exception:
-                        logger.exception(
-                            "Failed to clean up image snapshot %s",
-                            snapshot_path,
-                        )
-                    raise
+                        db.rollback()
+                        try:
+                            storage.delete_object(snapshot_path)
+                        except Exception:
+                            logger.exception(
+                                "Failed to clean up image snapshot %s",
+                                snapshot_path,
+                            )
+                        raise
                 cached = asset.id
                 url_cache[block.url] = cached
             block.asset_id = cached
@@ -393,7 +405,7 @@ def _hydrate_image_blocks(
             .filter_by(id=block.asset_id, workspace_id=workspace_id)
             .first()
         )
-        if asset_row is None:
+        if asset_row is None or asset_row.run_id not in {None, run_id}:
             raise ValueError("Image asset not found")
         block.data_base64 = base64.b64encode(
             storage.get_object(asset_row.storage_path)
@@ -695,6 +707,7 @@ def evaluate_run(run_id: str) -> None:
                             _hydrate_image_blocks(
                                 db,
                                 run.workspace_id,
+                                run.id,
                                 row,
                                 url_cache,
                             )
@@ -735,6 +748,7 @@ def evaluate_run(run_id: str) -> None:
                         _hydrate_image_blocks(
                             db,
                             run.workspace_id,
+                            run.id,
                             row,
                             url_cache,
                         )

@@ -204,6 +204,7 @@ def test_remote_url_is_snapshotted_and_fetched_once_per_run(
     results = db.query(RunResult).filter_by(run_id=run.id).order_by(RunResult.row_index).all()
     assert fetched == [remote_url]
     assert len(snapshots) == 1
+    assert snapshots[0].run_id == run.id
     assert snapshots[0].source_url == remote_url
     assert object_store[snapshots[0].storage_path] == b"remote-png"
     for result in results:
@@ -214,6 +215,43 @@ def test_remote_url_is_snapshotted_and_fetched_once_per_run(
             "mime_type": "image/png",
         }
         assert remote_url not in json.dumps(result.details)
+
+
+def test_snapshot_recovery_reuses_committed_run_asset_without_remote_refetch(
+    db, monkeypatch, object_store
+):
+    from app import tasks
+    from app.evals.samples import MultimodalSample
+    from app.models import EvaluationAsset
+
+    workspace = _workspace(db, "multimodal-snapshot-recovery@example.com")
+    run, _ = _static_run(db, workspace, [], object_store)
+    remote_url = "https://images.example/recover.png"
+    fetches = []
+
+    def fetch(url):
+        fetches.append(url)
+        return b"remote-png", "image/png"
+
+    monkeypatch.setattr(tasks, "fetch_remote_image", fetch, raising=False)
+    first = MultimodalSample(
+        input=[{"type": "image", "url": remote_url}],
+        actual_output=[{"type": "text", "text": "first attempt"}],
+    )
+    tasks._hydrate_image_blocks(db, workspace.id, run.id, first, {})
+
+    # A fresh cache models worker recovery after snapshot commit but before result commit.
+    recovered = MultimodalSample(
+        input=[{"type": "image", "url": remote_url}],
+        actual_output=[{"type": "text", "text": "recovered attempt"}],
+    )
+    tasks._hydrate_image_blocks(db, workspace.id, run.id, recovered, {})
+
+    snapshots = db.query(EvaluationAsset).filter_by(run_id=run.id).all()
+    assert fetches == [remote_url]
+    assert len(snapshots) == 1
+    assert first.input[0].asset_id == snapshots[0].id
+    assert recovered.input[0].asset_id == snapshots[0].id
 
 
 def test_missing_asset_fails_only_its_row(db, monkeypatch, object_store):
@@ -496,6 +534,15 @@ def test_snapshot_commit_failure_rolls_back_and_attempts_logged_storage_cleanup(
     class FailingDB:
         rolled_back = False
 
+        def query(self, *args):
+            return self
+
+        def filter_by(self, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
         def commit(self):
             raise RuntimeError("snapshot commit failed")
 
@@ -534,7 +581,7 @@ def test_snapshot_commit_failure_rolls_back_and_attempts_logged_storage_cleanup(
     with caplog.at_level("ERROR"), pytest.raises(
         RuntimeError, match="snapshot commit failed"
     ):
-        tasks._hydrate_image_blocks(db, "workspace-1", sample, {})
+        tasks._hydrate_image_blocks(db, "workspace-1", "run-1", sample, {})
 
     assert db.rolled_back is True
     assert deleted == [expected_path]
