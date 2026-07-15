@@ -738,6 +738,112 @@ def test_create_run_rejects_mixed_sample_kinds(
     assert "separate run" in response.json()["detail"].lower()
 
 
+def test_create_static_multimodal_run_with_judge(client, auth_headers, db, monkeypatch):
+    workspace, dataset, connection = _ready_dataset(
+        db, schema_map={"input": "prompt", "actual_output": "answer"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Image coherence",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.image_coherence"}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201
+
+
+def test_create_endpoint_multimodal_run_is_rejected(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db, schema_map={"input": "prompt", "actual_output": "answer"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Image endpoint",
+            "mode": "endpoint",
+            "metrics": [{"key": "deepeval.image_coherence"}],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+            "endpoint_config": {
+                "url": "https://example.com/evaluate",
+                "response_mappings": {"actual_output": "$.answer"},
+            },
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Multimodal runs support static datasets and ingestion"
+    )
+
+
+def test_create_multimodal_run_requires_judge(client, auth_headers, db, monkeypatch):
+    workspace, dataset, _ = _ready_dataset(
+        db,
+        provider=None,
+        schema_map={"input": "prompt", "actual_output": "answer"},
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Image coherence",
+            "mode": "static",
+            "metrics": [{"key": "deepeval.image_coherence"}],
+            "judge": None,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "A judge connection is required for the selected metrics"
+    )
+
+
+def test_create_run_rejects_mixed_multimodal_and_single_turn_metrics(
+    client, auth_headers, db, monkeypatch
+):
+    workspace, dataset, connection = _ready_dataset(
+        db, schema_map={"input": "prompt", "actual_output": "answer"}
+    )
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+
+    response = client.post(
+        f"/api/workspaces/{workspace.id}/runs",
+        json={
+            "dataset_id": dataset.id,
+            "name": "Mixed image and text metrics",
+            "mode": "static",
+            "metrics": [
+                {"key": "deepeval.image_coherence"},
+                {"key": "deepeval.answer_relevancy"},
+            ],
+            "judge": {"connection_id": connection.id, "model": "gpt-4.1-mini"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Metrics with different sample kinds need a separate run"
+    )
+
+
 def test_create_endpoint_agent_run_uses_named_trace_and_tool_mappings(
     client, auth_headers, db, monkeypatch
 ):

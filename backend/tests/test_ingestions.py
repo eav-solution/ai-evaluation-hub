@@ -35,6 +35,11 @@ def _conversation_url(client, auth_headers):
     return f"/api/workspaces/{workspace_id}/ingestions/conversations"
 
 
+def _multimodal_url(client, auth_headers):
+    workspace_id = client.get("/api/workspaces", headers=auth_headers).json()[0]["id"]
+    return f"/api/workspaces/{workspace_id}/ingestions/multimodal"
+
+
 def _judge_id(db):
     from app.models import ProviderConnection, Workspace
     from app.security import encrypt_secret
@@ -63,6 +68,22 @@ def _conversation_body(judge_id):
             "chatbot_role": "support agent",
         },
         "metrics": [{"key": "deepeval.role_adherence"}],
+        "judge": {"connection_id": judge_id, "model": "gpt-4.1-mini"},
+    }
+
+
+def _multimodal_body(judge_id):
+    return {
+        "name": "Chart answer eval",
+        "sample": {
+            "kind": "multimodal",
+            "input": [{"type": "text", "text": "Describe the chart"}],
+            "actual_output": [
+                {"type": "text", "text": "Revenue rises"},
+                {"type": "image", "asset_id": "a1"},
+            ],
+        },
+        "metrics": [{"key": "deepeval.image_coherence"}],
         "judge": {"connection_id": judge_id, "model": "gpt-4.1-mini"},
     }
 
@@ -367,3 +388,137 @@ def test_conversation_ingestion_caps_raw_body(
     assert response.status_code == 413
     assert response.json()["detail"] == "Ingestion payload exceeds the 5 MiB limit"
     assert object_store == {}
+
+
+def test_multimodal_ingestion_is_idempotent_and_snapshots_kind(
+    client, auth_headers, db, object_store, monkeypatch
+):
+    from app.models import EvaluationArtifact, Run
+
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+    body = _multimodal_body(_judge_id(db))
+    headers = {**auth_headers, "Idempotency-Key": "multimodal-replay"}
+
+    first = client.post(
+        _multimodal_url(client, auth_headers), json=body, headers=headers
+    )
+    replay = client.post(
+        _multimodal_url(client, auth_headers), json=body, headers=headers
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 200
+    assert replay.json() == first.json()
+    artifact = db.get(EvaluationArtifact, first.json()["artifact_id"])
+    run = db.get(Run, first.json()["run_id"])
+    assert artifact.sample_kind == "multimodal"
+    assert run.definition_snapshot["sample"]["kind"] == "multimodal"
+
+
+def test_multimodal_ingestion_rejects_changed_replay(
+    client, auth_headers, db, object_store, monkeypatch
+):
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+    body = _multimodal_body(_judge_id(db))
+    headers = {**auth_headers, "Idempotency-Key": "multimodal-conflict"}
+    first = client.post(
+        _multimodal_url(client, auth_headers), json=body, headers=headers
+    )
+    changed = {**body, "name": "Changed multimodal sample"}
+
+    conflict = client.post(
+        _multimodal_url(client, auth_headers),
+        json=changed,
+        headers=headers,
+    )
+
+    assert first.status_code == 202
+    assert conflict.status_code == 409
+
+
+def test_multimodal_ingestion_validates_sample(client, auth_headers, db, object_store):
+    body = _multimodal_body(_judge_id(db))
+    body["sample"]["input"] = []
+
+    response = client.post(
+        _multimodal_url(client, auth_headers),
+        json=body,
+        headers={**auth_headers, "Idempotency-Key": "invalid-multimodal"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == [
+        "body",
+        "sample",
+        "input",
+    ]
+
+
+def test_multimodal_ingestion_only_accepts_multimodal_metrics(
+    client, auth_headers, db, object_store
+):
+    body = _multimodal_body(_judge_id(db))
+    body["metrics"] = [{"key": "deepeval.turn_relevancy"}]
+
+    response = client.post(
+        _multimodal_url(client, auth_headers),
+        json=body,
+        headers={**auth_headers, "Idempotency-Key": "multimodal-wrong-kind"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Multimodal ingestion only accepts multimodal metrics"
+    )
+
+
+def test_multimodal_ingestion_caps_raw_body(
+    client, auth_headers, db, object_store, monkeypatch
+):
+    monkeypatch.setattr("app.routers.ingestions.MAX_INGESTION_BYTES", 128)
+    body = _multimodal_body(_judge_id(db))
+    body["sample"]["actual_output"][0]["text"] = "x" * 256
+
+    response = client.post(
+        _multimodal_url(client, auth_headers),
+        json=body,
+        headers={**auth_headers, "Idempotency-Key": "multimodal-too-large"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Ingestion payload exceeds the 5 MiB limit"
+    assert object_store == {}
+
+
+def test_multimodal_ingestion_excludes_hydrated_image_bytes_from_artifact(
+    client, auth_headers, db, object_store, monkeypatch
+):
+    from app.models import EvaluationArtifact
+
+    monkeypatch.setattr("app.tasks.dispatch_outbox_event", lambda event_id: True)
+    body = _multimodal_body(_judge_id(db))
+    body["sample"]["actual_output"][1]["data_base64"] = "internal-bytes-one"
+    headers = {**auth_headers, "Idempotency-Key": "multimodal-no-base64"}
+
+    first = client.post(
+        _multimodal_url(client, auth_headers), json=body, headers=headers
+    )
+    replay = client.post(
+        _multimodal_url(client, auth_headers), json=body, headers=headers
+    )
+    changed = _multimodal_body(body["judge"]["connection_id"])
+    changed["sample"]["actual_output"][1]["data_base64"] = "internal-bytes-two"
+    conflict = client.post(
+        _multimodal_url(client, auth_headers), json=changed, headers=headers
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 200
+    assert conflict.status_code == 409
+    artifact = db.get(EvaluationArtifact, first.json()["artifact_id"])
+    stored = json.loads(object_store[artifact.storage_path])
+    image = stored["actual_output"][1]
+    assert image["asset_id"] == "a1"
+    assert image["url"] is None
+    assert "data_base64" not in image
+    assert "internal-bytes" not in object_store[artifact.storage_path].decode()

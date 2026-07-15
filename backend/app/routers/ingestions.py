@@ -13,7 +13,8 @@ from starlette.responses import JSONResponse
 
 from app import storage
 from app.deps import get_db, get_workspace
-from app.evals.samples import AgentTraceSample, ConversationSample
+from app.evals.registry import METRICS
+from app.evals.samples import AgentTraceSample, ConversationSample, MultimodalSample
 from app.evals.snapshots import build_ingestion_definition_snapshot
 from app.models import (
     EvaluationArtifact,
@@ -36,8 +37,16 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 MAX_INGESTION_BYTES = 5 * 1024 * 1024
 _TOO_LARGE_DETAIL = "Ingestion payload exceeds the 5 MiB limit"
-_LIMITED_SUFFIXES = ("/ingestions/agent-traces", "/ingestions/conversations")
-_KIND_LABELS = {"agent_trace": "Agent trace", "conversation": "Conversation"}
+_LIMITED_SUFFIXES = (
+    "/ingestions/agent-traces",
+    "/ingestions/conversations",
+    "/ingestions/multimodal",
+)
+_KIND_LABELS = {
+    "agent_trace": "Agent trace",
+    "conversation": "Conversation",
+    "multimodal": "Multimodal",
+}
 
 
 class AgentTraceBodyLimitMiddleware:
@@ -168,6 +177,10 @@ def _conversation_or_422(raw: dict[str, Any]) -> ConversationSample:
     return _validated_sample_or_422(raw, ConversationSample)
 
 
+def _multimodal_or_422(raw: dict[str, Any]) -> MultimodalSample:
+    return _validated_sample_or_422(raw, MultimodalSample)
+
+
 def _delete_losing_upload(key: str) -> None:
     try:
         storage.delete_object(key)
@@ -182,7 +195,7 @@ def _ingest_sample(
     idempotency_key: str,
     ws: Workspace,
     db: Session,
-    sample_kind: Literal["agent_trace", "conversation"],
+    sample_kind: Literal["agent_trace", "conversation", "multimodal"],
     validate_sample: Callable[[dict[str, Any]], Any],
 ) -> dict[str, str]:
     raw_sample = _encode_sample(body.sample)
@@ -192,7 +205,18 @@ def _ingest_sample(
         response.status_code = 200
         return _out(*existing)
 
-    validate_sample(body.sample)
+    validated_sample = validate_sample(body.sample)
+    if sample_kind == "multimodal":
+        raw_sample = _encode_sample(validated_sample.model_dump(mode="json"))
+        selected_adapters = [METRICS.get(item.key) for item in body.metrics]
+        if all(
+            adapter is not None and adapter.sample_kind != sample_kind
+            for adapter in selected_adapters
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Multimodal ingestion only accepts multimodal metrics",
+            )
     selected, resource_roles, selected_kind = _validate_metric_selection(
         body.metrics, set(body.sample)
     )
@@ -340,4 +364,25 @@ def ingest_conversation(
         db=db,
         sample_kind="conversation",
         validate_sample=_conversation_or_422,
+    )
+
+
+@router.post("/multimodal", status_code=202)
+def ingest_multimodal(
+    body: IngestionIn,
+    response: Response,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=1, max_length=255)
+    ],
+    ws: Workspace = Depends(get_workspace),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return _ingest_sample(
+        body=body,
+        response=response,
+        idempotency_key=idempotency_key,
+        ws=ws,
+        db=db,
+        sample_kind="multimodal",
+        validate_sample=_multimodal_or_422,
     )

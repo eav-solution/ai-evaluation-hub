@@ -222,6 +222,12 @@ def create_run(
         body.metrics, available_fields
     )
 
+    if sample_kind == "multimodal" and body.mode == "endpoint":
+        raise HTTPException(
+            status_code=422,
+            detail="Multimodal runs support static datasets and ingestion",
+        )
+
     if sample_kind != "conversation":
         if "input" not in dataset.schema_map:
             raise HTTPException(
