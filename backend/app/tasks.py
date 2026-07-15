@@ -1,9 +1,12 @@
+import base64
 import json
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from statistics import fmean, median
 
 from app import generation, storage
+from app.assets import asset_storage_path, fetch_remote_image, store_image_asset
 from app.celery_app import celery_app
 from app.config import settings
 from app.datasets import parse_dataset
@@ -17,13 +20,17 @@ from app.evals.samples import (
     AgentTraceSample,
     ConversationSample,
     EvaluationSample,
+    MultimodalSample,
     SingleTurnSample,
     conversation_actual_preview,
     conversation_input_preview,
+    multimodal_actual_preview,
+    multimodal_input_preview,
 )
 from app.models import (
     Dataset,
     Document,
+    EvaluationAsset,
     EvaluationArtifact,
     GenerationJob,
     GenerationRecord,
@@ -33,6 +40,9 @@ from app.models import (
     RunSummary,
 )
 from app.connections import resolve_connection
+
+
+logger = logging.getLogger(__name__)
 
 
 def dispatch_outbox_event(event_id: str) -> bool:
@@ -339,7 +349,79 @@ def _result_complete(result: RunResult, metric_keys: list[str]) -> bool:
     )
 
 
+def _hydrate_image_blocks(
+    db,
+    workspace_id: str,
+    sample: EvaluationSample,
+    url_cache: dict[str, str],
+) -> None:
+    if not isinstance(sample, MultimodalSample):
+        return
+    for block in [*sample.input, *sample.actual_output]:
+        if block.type != "image":
+            continue
+        if block.url and not block.asset_id:
+            cached = url_cache.get(block.url)
+            if cached is None:
+                data, mime_type = fetch_remote_image(block.url)
+                asset = store_image_asset(
+                    db,
+                    workspace_id,
+                    data,
+                    mime_type,
+                    source_url=block.url,
+                )
+                snapshot_path = asset_storage_path(workspace_id, asset.id)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    try:
+                        storage.delete_object(snapshot_path)
+                    except Exception:
+                        logger.exception(
+                            "Failed to clean up image snapshot %s",
+                            snapshot_path,
+                        )
+                    raise
+                cached = asset.id
+                url_cache[block.url] = cached
+            block.asset_id = cached
+            block.url = None
+        asset_row = (
+            db.query(EvaluationAsset)
+            .filter_by(id=block.asset_id, workspace_id=workspace_id)
+            .first()
+        )
+        if asset_row is None:
+            raise ValueError("Image asset not found")
+        block.data_base64 = base64.b64encode(
+            storage.get_object(asset_row.storage_path)
+        ).decode()
+        block.mime_type = asset_row.mime_type
+
+
 def _sample_details(sample: EvaluationSample) -> dict | None:
+    if isinstance(sample, MultimodalSample):
+        return {
+            "sample": {
+                "kind": "multimodal",
+                "input": [
+                    block.model_dump(mode="json", exclude_none=True)
+                    for block in sample.input
+                ],
+                "actual_output": [
+                    block.model_dump(mode="json", exclude_none=True)
+                    for block in sample.actual_output
+                ],
+                "metadata": sample.metadata,
+                "tags": sample.tags,
+                "source": (
+                    sample.source.model_dump(mode="json") if sample.source else None
+                ),
+                "normalizer_revision": sample.normalizer_revision,
+            }
+        }
     if isinstance(sample, ConversationSample):
         return {
             "sample": {
@@ -388,6 +470,13 @@ def _sample_details(sample: EvaluationSample) -> dict | None:
 
 
 def _write_result_sample(result: RunResult, sample: EvaluationSample) -> None:
+    if isinstance(sample, MultimodalSample):
+        result.input = multimodal_input_preview(sample)
+        result.actual = multimodal_actual_preview(sample)
+        result.expected = None
+        result.contexts = None
+        result.details = _sample_details(sample)
+        return
     if isinstance(sample, ConversationSample):
         result.input = conversation_input_preview(sample)
         result.actual = conversation_actual_preview(sample)
@@ -409,6 +498,18 @@ def _write_result_sample(result: RunResult, sample: EvaluationSample) -> None:
 def _stored_sample(result: RunResult, sample_kind: SampleKind) -> EvaluationSample:
     details = result.details if isinstance(result.details, dict) else {}
     sample = details.get("sample") if isinstance(details.get("sample"), dict) else {}
+    if sample_kind == "multimodal":
+        return MultimodalSample.model_validate(
+            {
+                "kind": "multimodal",
+                "input": sample.get("input"),
+                "actual_output": sample.get("actual_output"),
+                "metadata": sample.get("metadata", {}),
+                "tags": sample.get("tags", []),
+                "source": sample.get("source"),
+                "normalizer_revision": sample.get("normalizer_revision", "1"),
+            }
+        )
     if sample_kind == "agent_trace":
         return AgentTraceSample.model_validate(
             {
@@ -458,6 +559,7 @@ def evaluate_run(run_id: str) -> None:
         db.close()
         return
     run, attempt = claimed
+    url_cache: dict[str, str] = {}
     try:
         source_rows, schema_map = _load_run_source(db, run)
         metric_configs = _validated_metric_configs(run)
@@ -590,6 +692,12 @@ def evaluate_run(run_id: str) -> None:
                                 schema_map,
                                 source_ref={"row_index": index},
                             )
+                            _hydrate_image_blocks(
+                                db,
+                                run.workspace_id,
+                                row,
+                                url_cache,
+                            )
                         except Exception as exc:
                             result = RunResult(
                                 workspace_id=run.workspace_id,
@@ -623,6 +731,28 @@ def evaluate_run(run_id: str) -> None:
                     stored_results[index] = result
                 elif result.error is None:
                     row = _stored_sample(result, sample_kind)
+                    try:
+                        _hydrate_image_blocks(
+                            db,
+                            run.workspace_id,
+                            row,
+                            url_cache,
+                        )
+                    except Exception as exc:
+                        result.scores = {
+                            key: (
+                                {
+                                    **score,
+                                    "error": _INTERRUPTED_METRIC,
+                                    "in_progress": False,
+                                }
+                                if score.get("in_progress", False)
+                                else score
+                            )
+                            for key, score in (result.scores or {}).items()
+                        }
+                        result.error = str(exc)
+                        db.commit()
 
                 if result.error is None and row is not None:
                     for config in metric_configs:
