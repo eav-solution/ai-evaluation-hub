@@ -144,6 +144,7 @@ def test_deepeval_llm_custom_parses_json_without_parse_helper(monkeypatch):
     assert result.verdict == "yes"
     # plain create() used, never the structured-output parse helper
     assert "response_format" not in _FakeOpenAI.last["create_kwargs"]
+    assert _FakeOpenAI.last["create_kwargs"]["messages"][0]["content"] == "prompt"
 
 
 def test_ragas_embeddings_custom_requires_embedding_model():

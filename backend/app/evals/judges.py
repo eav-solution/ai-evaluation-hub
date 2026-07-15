@@ -124,6 +124,61 @@ def _parse_schema(text: str, schema):
         return schema.model_validate(json.loads(text[start : end + 1]))
 
 
+def _split_marker_prompt(prompt: str):
+    """Return None for plain prompts, else parsed text and image segments."""
+    from deepeval.test_case import MLLMImage
+
+    if "[DEEPEVAL:" not in prompt:
+        return None
+    # DeepEval 4.1.0 exposes this parser on MLLMImage. Task 4 locks the contract.
+    segments = MLLMImage.parse_multimodal_string(prompt)
+    if all(isinstance(segment, str) for segment in segments):
+        return None
+    return segments
+
+
+def _openai_content(segments) -> list[dict]:
+    parts = []
+    for segment in segments:
+        if isinstance(segment, str):
+            if segment:
+                parts.append({"type": "text", "text": segment})
+            continue
+        if not segment.dataBase64 or not segment.mimeType:
+            raise ValueError("Image was not hydrated before the judge call")
+        parts.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{segment.mimeType};base64,{segment.dataBase64}"
+                },
+            }
+        )
+    return parts
+
+
+def _anthropic_content(segments) -> list[dict]:
+    parts = []
+    for segment in segments:
+        if isinstance(segment, str):
+            if segment:
+                parts.append({"type": "text", "text": segment})
+            continue
+        if not segment.dataBase64 or not segment.mimeType:
+            raise ValueError("Image was not hydrated before the judge call")
+        parts.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": segment.mimeType,
+                    "data": segment.dataBase64,
+                },
+            }
+        )
+    return parts
+
+
 def ragas_llm(judge: JudgeConfig):
     from ragas.llms import llm_factory
 
@@ -169,12 +224,23 @@ def deepeval_llm(judge: JudgeConfig):
         def load_model(self):
             return self.client
 
+        def supports_multimodal(self):
+            return True
+
         def generate(self, prompt: str, schema=None):
+            segments = _split_marker_prompt(prompt)
+            content = prompt
+            if segments is not None:
+                content = (
+                    _openai_content(segments)
+                    if judge.provider in _OPENAI_TYPES
+                    else _anthropic_content(segments)
+                )
             if judge.provider == "openai":
                 if schema is not None:
                     response = self.client.chat.completions.parse(
                         model=judge.model,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=[{"role": "user", "content": content}],
                         response_format=schema,
                         max_tokens=settings.judge_max_tokens,
                     )
@@ -184,7 +250,7 @@ def deepeval_llm(judge: JudgeConfig):
                     return response.choices[0].message.parsed
                 response = self.client.chat.completions.create(
                     model=judge.model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": content}],
                     max_tokens=settings.judge_max_tokens,
                 )
                 self._evalhub_usage_tracker.record_response(response)
@@ -197,7 +263,7 @@ def deepeval_llm(judge: JudgeConfig):
                 # use plain Chat Completions and parse the JSON ourselves.
                 response = self.client.chat.completions.create(
                     model=judge.model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": content}],
                     max_tokens=settings.judge_max_tokens,
                 )
                 self._evalhub_usage_tracker.record_response(response)
@@ -211,7 +277,7 @@ def deepeval_llm(judge: JudgeConfig):
             response = self.client.messages.create(
                 model=judge.model,
                 max_tokens=settings.judge_max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content}],
             )
             self._evalhub_usage_tracker.record_response(response)
             if response.stop_reason == "max_tokens":
