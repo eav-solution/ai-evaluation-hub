@@ -61,6 +61,7 @@ const metric: Metric = {
 const run: Run = {
   id: "run-1",
   dataset_id: "dataset-1",
+  artifact_id: null,
   name: "RAG benchmark",
   mode: "static",
   metric_config: {metrics: [{key: metric.key, threshold: 0.5}]},

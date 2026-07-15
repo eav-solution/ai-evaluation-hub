@@ -36,6 +36,18 @@ describe("DatasetsPage", () => {
             sample_kind: "single_turn",
             requires: [],
           },
+          {
+            key: "deepeval.agent_loop_detection",
+            category: "agentic",
+            sample_kind: "agent_trace",
+            requires: ["agent_trace"],
+          },
+          {
+            key: "deepeval.tool_correctness",
+            category: "agentic",
+            sample_kind: "agent_trace",
+            requires: ["tools_called", "expected_tools"],
+          },
         ] as never;
       }
       if (path === "/api/workspaces/workspace-1/datasets") {
@@ -56,6 +68,20 @@ describe("DatasetsPage", () => {
             storage_path: "hidden",
             schema_map: {input: "prompt", actual_output: "answer"},
           },
+          {
+            id: "agent-data",
+            name: "Agent traces",
+            format: "jsonl",
+            row_count: 2,
+            storage_path: "hidden",
+            schema_map: {
+              input: "prompt",
+              actual_output: "answer",
+              agent_trace: "trace",
+              tools_called: "called",
+              expected_tools: "expected",
+            },
+          },
         ] as never;
       }
       return undefined as never;
@@ -68,6 +94,7 @@ describe("DatasetsPage", () => {
 
     expect(await screen.findByText("RAG examples")).toBeInTheDocument();
     expect(screen.getByText("General outputs")).toBeInTheDocument();
+    expect(screen.getByText("Agent traces")).toBeInTheDocument();
     const ragRow = screen.getByText("RAG examples").closest(".dataset-row");
     const generalRow = screen.getByText("General outputs").closest(".dataset-row");
     expect(ragRow).not.toBeNull();
@@ -76,6 +103,11 @@ describe("DatasetsPage", () => {
     expect(within(ragRow as HTMLElement).getByText("3 compatible metrics")).toBeInTheDocument();
     expect(within(generalRow as HTMLElement).getByText("General")).toBeInTheDocument();
     expect(within(generalRow as HTMLElement).getByText("2 compatible metrics")).toBeInTheDocument();
+    const agentRow = screen.getByText("Agent traces").closest(".dataset-row");
+    expect(agentRow).not.toBeNull();
+    expect(within(agentRow as HTMLElement).getByText("Agentic")).toBeInTheDocument();
+    expect(within(agentRow as HTMLElement).getByText("General")).toBeInTheDocument();
+    expect(within(agentRow as HTMLElement).getByText("4 compatible metrics")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", {name: "RAG"}));
     expect(screen.getByText("RAG examples")).toBeInTheDocument();
@@ -84,6 +116,10 @@ describe("DatasetsPage", () => {
     await user.click(screen.getByRole("button", {name: "General"}));
     expect(screen.queryByText("RAG examples")).not.toBeInTheDocument();
     expect(screen.getByText("General outputs")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", {name: "Agentic"}));
+    expect(screen.getByText("Agent traces")).toBeInTheDocument();
+    expect(screen.queryByText("General outputs")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", {name: "All"}));
     await waitFor(() => {

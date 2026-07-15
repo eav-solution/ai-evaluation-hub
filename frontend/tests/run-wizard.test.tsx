@@ -151,6 +151,99 @@ const ragLivePreset = {
   ],
 };
 
+const agentDataset = {
+  ...dataset,
+  id: "dataset-agent",
+  name: "Agent traces",
+  schema_map: {
+    input: "prompt",
+    actual_output: "answer",
+    agent_trace: "trace",
+    tools_called: "called",
+    expected_tools: "expected",
+  },
+};
+
+const taskCompletion: Metric = {
+  ...biasMetric,
+  key: "deepeval.task_completion",
+  category: "agentic",
+  family: "trace",
+  display_name: "Task Completion",
+  description: "Completed the task",
+  sample_kind: "agent_trace",
+  requires: ["agent_trace"],
+  resources: ["judge"],
+  config_schema: {
+    type: "object",
+    properties: {
+      threshold: {type: "number", title: "Threshold"},
+      task: {anyOf: [{type: "string"}, {type: "null"}], title: "Task"},
+    },
+  },
+  default_config: {threshold: 0.5, task: null},
+};
+
+const agentLoop: Metric = {
+  ...taskCompletion,
+  key: "deepeval.agent_loop_detection",
+  display_name: "Agent Loop Detection",
+  description: "Avoided loops",
+  resources: [],
+  config_schema: {
+    type: "object",
+    properties: {
+      repetition_threshold: {type: "integer", title: "Repetition threshold"},
+      similarity_threshold: {type: "number", title: "Similarity threshold"},
+      check_tool_repetition: {type: "boolean", title: "Check tool repetition"},
+      check_reasoning_stagnation: {type: "boolean", title: "Check reasoning stagnation"},
+      check_call_graph_cycles: {type: "boolean", title: "Check call graph cycles"},
+    },
+  },
+  default_config: {
+    repetition_threshold: 3,
+    similarity_threshold: 0.85,
+    check_tool_repetition: true,
+    check_reasoning_stagnation: true,
+    check_call_graph_cycles: true,
+  },
+};
+
+const toolCorrectness: Metric = {
+  ...agentLoop,
+  key: "deepeval.tool_correctness",
+  family: "tools",
+  display_name: "Tool Correctness",
+  description: "Called expected tools",
+  requires: ["tools_called", "expected_tools"],
+  config_schema: {
+    type: "object",
+    properties: {
+      evaluation_params: {
+        type: "array",
+        title: "Evaluation params",
+        items: {type: "string", enum: ["input_parameters", "output"]},
+      },
+      should_exact_match: {type: "boolean", title: "Should exact match"},
+      should_consider_ordering: {type: "boolean", title: "Should consider ordering"},
+    },
+  },
+  default_config: {
+    evaluation_params: [],
+    should_exact_match: false,
+    should_consider_ordering: false,
+  },
+};
+
+const agenticPreset = {
+  id: "agentic",
+  display_name: "Agentic essentials",
+  description: "Core trace checks",
+  category: "agentic" as const,
+  mode_hint: "static" as const,
+  metric_keys: [taskCompletion.key, agentLoop.key],
+};
+
 beforeEach(() => {
   mockedApi.mockReset();
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -201,6 +294,168 @@ describe("RunWizard", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("Explains the metric.")).toBeInTheDocument();
     expect(checkbox).not.toBeChecked();
+  });
+
+  it("gives metric families stronger hierarchy than framework labels", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[dataset]}
+        initialMetrics={[deepAnswerRelevancy, contextualRelevancy]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    expect(screen.getByRole("heading", {name: "Generation"})).toHaveClass(
+      "metric-family-heading",
+    );
+    expect(screen.getAllByText("deepeval")[0]).toHaveClass("metric-framework-label");
+    expect(screen.queryByText(/\d+ metrics?/i)).not.toBeInTheDocument();
+  });
+
+  it("shows Agentic Trace and Tools families with framework sub-labels", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[agentDataset]}
+        initialMetrics={[taskCompletion, agentLoop, toolCorrectness]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    expect(screen.getByRole("heading", {name: "Trace"})).toHaveClass(
+      "metric-family-heading",
+    );
+    expect(screen.getByRole("heading", {name: "Tools"})).toHaveClass(
+      "metric-family-heading",
+    );
+    expect(screen.getByLabelText("Task Completion")).toBeEnabled();
+    expect(screen.getByLabelText("Agent Loop Detection")).toBeEnabled();
+    expect(screen.getByLabelText("Tool Correctness")).toBeEnabled();
+    expect(screen.getAllByText("deepeval")).toHaveLength(2);
+  });
+
+  it("applies the Agentic preset with exactly task completion and loop detection", async () => {
+    mockedApi.mockImplementation((path: string) => {
+      if (path === "/api/metrics/presets") return Promise.resolve([agenticPreset]) as never;
+      return Promise.resolve({id: "run-1"}) as never;
+    });
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[agentDataset]}
+        initialMetrics={[taskCompletion, agentLoop, toolCorrectness]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", {name: "Agentic essentials"}));
+
+    expect(screen.getByLabelText("Task Completion")).toBeChecked();
+    expect(screen.getByLabelText("Agent Loop Detection")).toBeChecked();
+    expect(screen.getByLabelText("Tool Correctness")).not.toBeChecked();
+  });
+
+  it("keeps different sample kinds in separate runs", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[agentDataset]}
+        initialMetrics={[agentLoop, biasMetric]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Agent Loop Detection"));
+    fireEvent.click(screen.getByRole("button", {name: "General"}));
+
+    expect(screen.getByLabelText("Bias")).toBeDisabled();
+    expect(screen.getByText("Choose in a separate run")).toBeInTheDocument();
+  });
+
+  it("launches deterministic Agentic metrics without judge controls or payload", async () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[agentDataset]}
+        initialMetrics={[agentLoop]}
+        initialConnections={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Agent Loop Detection"));
+    expect(screen.queryByLabelText("LLM Connection")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("LLM Model")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Launch evaluation"}));
+
+    await waitFor(() => {
+      const launchCall = mockedApi.mock.calls.find(
+        ([path, init]) => path === "/api/workspaces/workspace-1/runs" && init,
+      );
+      const payload = JSON.parse(String(launchCall?.[1]?.body));
+      expect(payload.judge).toBeNull();
+    });
+  });
+
+  it("shows judge controls when Task Completion is selected", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[agentDataset]}
+        initialMetrics={[taskCompletion]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Task Completion"));
+    expect(screen.getByLabelText("LLM Connection")).toBeInTheDocument();
+    expect(screen.getByLabelText("LLM Model")).toBeInTheDocument();
+  });
+
+  it("collects Agentic endpoint mappings before enabling a tool metric", async () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[{...agentDataset, schema_map: {input: "prompt"}}]}
+        initialMetrics={[toolCorrectness]}
+        initialConnections={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Live endpoint"));
+    expect(screen.getByLabelText("Agent trace JSONPath")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tools called JSONPath")).toBeInTheDocument();
+    expect(screen.getByLabelText("Expected tools JSONPath")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Tools called JSONPath"), {
+      target: {value: "$.called"},
+    });
+    fireEvent.change(screen.getByLabelText("Expected tools JSONPath"), {
+      target: {value: "$.expected"},
+    });
+    expect(screen.getByLabelText("Tool Correctness")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Agent trace JSONPath"), {
+      target: {value: "$.trace"},
+    });
+    expect(screen.getByLabelText("Tool Correctness")).toBeEnabled();
+    fireEvent.click(screen.getByLabelText("Tool Correctness"));
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: {value: "https://example.test/agent"},
+    });
+    fireEvent.click(screen.getByRole("button", {name: "Launch evaluation"}));
+
+    await waitFor(() => {
+      const launchCall = mockedApi.mock.calls.find(
+        ([path, init]) => path === "/api/workspaces/workspace-1/runs" && init,
+      );
+      const payload = JSON.parse(String(launchCall?.[1]?.body));
+      expect(payload.endpoint_config.response_mappings).toEqual({
+        actual_output: "$.answer",
+        agent_trace: "$.trace",
+        tools_called: "$.called",
+        expected_tools: "$.expected",
+      });
+      expect(payload.judge).toBeNull();
+    });
   });
 
   it("uses consistent LLM and embedding field labels", () => {

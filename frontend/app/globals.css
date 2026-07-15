@@ -161,14 +161,17 @@ legend { margin-bottom: 10px; font-size: 13.5px; font-weight: 720; text-transfor
 .metric-picker { display: grid; gap: 14px; }
 .metric-category-tabs, .metric-family-filters, .metric-presets { display: flex; flex-wrap: wrap; gap: 7px; }
 .metric-category-tabs button, .metric-family-filters button, .metric-presets button { min-height: 32px; padding: 6px 10px; }
-.metric-category-tabs button[aria-pressed="true"], .metric-family-filters button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary); color: #fff; }
+.metric-category-tabs button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary); color: #fff; }
+.metric-family-filters button[aria-pressed="true"] { border-color: #cfcef5; background: var(--soft); color: var(--primary-dark); box-shadow: none; }
 .metric-presets { align-items: center; border-radius: 9px; background: #f8f7ff; padding: 9px; }
 .metric-presets > span { color: var(--primary-dark); font-size: 10.5px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
 .metric-picker-controls { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); align-items: end; gap: 12px; }
 .metric-family-filters { justify-content: flex-end; }
-.metric-family { display: grid; gap: 8px; }
-.metric-family > h3 { margin: 0; font-size: 13px; }
-.metric-family fieldset { margin-bottom: 8px; }
+.metric-family { display: grid; gap: 10px; }
+.metric-family + .metric-family { margin-top: 8px; }
+.metric-family-heading { margin: 0; border-left: 3px solid var(--primary); border-radius: 0 7px 7px 0; background: #f8f7ff; font-size: 16px; font-weight: 720; padding: 8px 10px; }
+.metric-framework-label { margin-bottom: 8px; color: var(--subtle); font-size: 10.5px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.metric-family fieldset { margin-bottom: 10px; }
 .metric-family fieldset:last-child { margin-bottom: 0; }
 .metric-picker-empty { margin: 0; border: 1px dashed var(--line-strong); border-radius: 9px; color: var(--muted); padding: 18px; text-align: center; }
 .metric-configurations { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }

@@ -5,12 +5,18 @@ import {FormEvent, useMemo, useState} from "react";
 import {api} from "@/lib/api";
 import type {Dataset} from "@/lib/types";
 
-const fields = [
+const commonFields = [
   ["input", "Input"],
   ["actual_output", "Actual output"],
   ["expected_output", "Expected output"],
   ["retrieval_contexts", "Retrieval contexts"],
   ["context", "Trusted context"],
+] as const;
+
+const agentFields = [
+  ["agent_trace", "Agent trace"],
+  ["tools_called", "Tools called"],
+  ["expected_tools", "Expected tools"],
 ] as const;
 
 export function ColumnMapper({
@@ -25,37 +31,48 @@ export function ColumnMapper({
     [dataset.preview],
   );
   const [mapping, setMapping] = useState<Record<string, string>>(dataset.schema_map);
+  function mappingFields(
+    groupFields: readonly (readonly [string, string])[],
+  ) {
+    return groupFields.map(([key, label]) => (
+      <label key={key}>
+        {label}
+        <select
+          value={
+            key === "retrieval_contexts"
+              ? mapping.retrieval_contexts ?? mapping.contexts ?? ""
+              : mapping[key] ?? ""
+          }
+          onChange={(event) =>
+            setMapping((current) => {
+              const next = {...current};
+              if (key === "retrieval_contexts") delete next.contexts;
+              if (event.target.value) next[key] = event.target.value;
+              else delete next[key];
+              return next;
+            })
+          }
+        >
+          <option value="">Not mapped</option>
+          {columns.map((column) => (
+            <option value={column} key={column}>{column}</option>
+          ))}
+        </select>
+      </label>
+    ));
+  }
   return (
     <div className="mapper">
       <fieldset className="mapping-group">
         <legend>Common / RAG</legend>
         <div className="mapping-grid">
-          {fields.map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <select
-                value={
-                  key === "retrieval_contexts"
-                    ? mapping.retrieval_contexts ?? mapping.contexts ?? ""
-                    : mapping[key] ?? ""
-                }
-                onChange={(event) =>
-                  setMapping((current) => {
-                    const next = {...current};
-                    if (key === "retrieval_contexts") delete next.contexts;
-                    if (event.target.value) next[key] = event.target.value;
-                    else delete next[key];
-                    return next;
-                  })
-                }
-              >
-                <option value="">Not mapped</option>
-                {columns.map((column) => (
-                  <option value={column} key={column}>{column}</option>
-                ))}
-              </select>
-            </label>
-          ))}
+          {mappingFields(commonFields)}
+        </div>
+      </fieldset>
+      <fieldset className="mapping-group">
+        <legend>Agentic</legend>
+        <div className="mapping-grid">
+          {mappingFields(agentFields)}
         </div>
       </fieldset>
       <button className="primary" onClick={() => onSave(mapping)} disabled={!mapping.input}>

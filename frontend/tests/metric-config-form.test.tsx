@@ -86,4 +86,58 @@ describe("MetricConfigForm", () => {
     expect(onValidityChange).toHaveBeenLastCalledWith(true);
     expect(onChange).toHaveBeenLastCalledWith({expected_schema: {type: "object"}});
   });
+
+  it("renders Agentic adapter configuration controls from schema metadata", () => {
+    const agentMetric = {
+      ...metric,
+      key: "test.agentic",
+      config_schema: {
+        type: "object",
+        properties: {
+          task: {anyOf: [{type: "string"}, {type: "null"}], title: "Task"},
+          evaluation_params: {
+            type: "array",
+            title: "Evaluation params",
+            items: {type: "string", enum: ["input_parameters", "output"]},
+          },
+          should_exact_match: {type: "boolean", title: "Should exact match"},
+          should_consider_ordering: {type: "boolean", title: "Should consider ordering"},
+          repetition_threshold: {type: "integer", title: "Repetition threshold"},
+          similarity_threshold: {type: "number", title: "Similarity threshold"},
+          check_tool_repetition: {type: "boolean", title: "Check tool repetition"},
+          check_reasoning_stagnation: {type: "boolean", title: "Check reasoning stagnation"},
+          check_call_graph_cycles: {type: "boolean", title: "Check call graph cycles"},
+        },
+      },
+    } as Metric;
+
+    render(
+      <MetricConfigForm
+        metric={agentMetric}
+        value={{
+          task: "Book the flight",
+          evaluation_params: ["input_parameters"],
+          should_exact_match: false,
+          should_consider_ordering: true,
+          repetition_threshold: 3,
+          similarity_threshold: 0.85,
+          check_tool_repetition: true,
+          check_reasoning_stagnation: true,
+          check_call_graph_cycles: true,
+        }}
+        onChange={vi.fn()}
+        onValidityChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Task")).toHaveValue("Book the flight");
+    expect(screen.getByLabelText("Evaluation params")).toHaveAttribute("multiple");
+    expect(screen.getByLabelText("Should exact match")).toHaveAttribute("type", "checkbox");
+    expect(screen.getByLabelText("Should consider ordering")).toBeChecked();
+    expect(screen.getByLabelText("Repetition threshold")).toHaveAttribute("type", "number");
+    expect(screen.getByLabelText("Similarity threshold")).toHaveAttribute("type", "number");
+    expect(screen.getByLabelText("Check tool repetition")).toBeChecked();
+    expect(screen.getByLabelText("Check reasoning stagnation")).toBeChecked();
+    expect(screen.getByLabelText("Check call graph cycles")).toBeChecked();
+  });
 });

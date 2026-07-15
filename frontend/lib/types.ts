@@ -87,11 +87,12 @@ export type Summary = {
 
 export type Run = {
   id: string;
-  dataset_id: string;
+  dataset_id: string | null;
+  artifact_id: string | null;
   name: string;
-  mode: "static" | "endpoint";
+  mode: "static" | "endpoint" | "ingestion";
   metric_config: { metrics: { key: string; threshold?: number; rubric?: string }[] };
-  judge_config: ConnectionSnapshot & { provider?: string };
+  judge_config: Partial<ConnectionSnapshot> & { provider?: string };
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   progress_done: number;
   progress_total: number;

@@ -17,7 +17,8 @@ export function missingRequirements(
   responseMappings: Record<string, string> = {},
   config: Record<string, unknown> = metric.default_config,
 ) {
-  if (!dataset) return metric.requires;
+  const sampleRequirements = metric.sample_kind === "agent_trace" ? ["agent_trace"] : [];
+  if (!dataset) return Array.from(new Set([...sampleRequirements, ...metric.requires]));
   const fields = new Set(Object.keys(dataset.schema_map));
   if (fields.has("contexts")) {
     fields.add("retrieval_contexts");
@@ -25,7 +26,12 @@ export function missingRequirements(
   Object.entries(responseMappings).forEach(([field, path]) => {
     if (path.trim()) fields.add(field);
   });
-  return missingMetricRequirements(metric, fields, config);
+  return Array.from(
+    new Set([
+      ...sampleRequirements.filter((field) => !fields.has(field)),
+      ...missingMetricRequirements(metric, fields, config),
+    ]),
+  );
 }
 
 const categoryLabels = {rag: "RAG", agentic: "Agentic", general: "General"};
@@ -82,6 +88,9 @@ export function RunWizard({
   const [actualOutputJsonpath, setActualOutputJsonpath] = useState("$.answer");
   const [contextJsonpath, setContextJsonpath] = useState("");
   const [retrievalContextsJsonpath, setRetrievalContextsJsonpath] = useState("");
+  const [agentTraceJsonpath, setAgentTraceJsonpath] = useState("");
+  const [toolsCalledJsonpath, setToolsCalledJsonpath] = useState("");
+  const [expectedToolsJsonpath, setExpectedToolsJsonpath] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -112,8 +121,18 @@ export function RunWizard({
   const connection = connections.find((item) => item.id === connectionId);
   const isCustom = connection?.connection_type === "openai_compatible";
   const chatModelOptions = modelOptions(connection?.connection_type, customModels);
-  const needsEmbedding = selected.some((key) =>
-    metrics.find((metric) => metric.key === key)?.resources.includes("embedding"),
+  const selectedMetrics = selected
+    .map((key) => metrics.find((metric) => metric.key === key))
+    .filter((metric): metric is Metric => Boolean(metric));
+  const selectedSampleKind = selectedMetrics[0]?.sample_kind;
+  const selectedResources = new Set(selectedMetrics.flatMap((metric) => metric.resources));
+  const needsJudge = selectedMetrics.length === 0 || selectedResources.has("judge");
+  const needsEmbedding = selectedResources.has("embedding");
+  const endpointSampleKind = selectedSampleKind ??
+    (activeCategory === "agentic" ? "agent_trace" : "single_turn");
+  const needsAgentToolMappings = selectedMetrics.length === 0 || selectedMetrics.some(
+    (metric) =>
+      metric.requires.includes("tools_called") || metric.requires.includes("expected_tools"),
   );
   // Embeddings need their own connection, limited to embedding-capable providers.
   const embeddingConnections = connections.filter(
@@ -180,12 +199,32 @@ export function RunWizard({
   }, [embeddingConnection?.id, embeddingConnection?.connection_type, workspaceId]);
 
   const endpointResponseMappings = useMemo(
-    () => ({
-      actual_output: actualOutputJsonpath,
-      context: contextJsonpath,
-      retrieval_contexts: retrievalContextsJsonpath,
-    }),
-    [actualOutputJsonpath, contextJsonpath, retrievalContextsJsonpath],
+    () => endpointSampleKind === "agent_trace"
+      ? {
+          actual_output: actualOutputJsonpath,
+          agent_trace: agentTraceJsonpath,
+          ...(needsAgentToolMappings
+            ? {
+                tools_called: toolsCalledJsonpath,
+                expected_tools: expectedToolsJsonpath,
+              }
+            : {}),
+        }
+      : {
+          actual_output: actualOutputJsonpath,
+          context: contextJsonpath,
+          retrieval_contexts: retrievalContextsJsonpath,
+        },
+    [
+      actualOutputJsonpath,
+      agentTraceJsonpath,
+      contextJsonpath,
+      endpointSampleKind,
+      expectedToolsJsonpath,
+      needsAgentToolMappings,
+      retrievalContextsJsonpath,
+      toolsCalledJsonpath,
+    ],
   );
   const activeResponseMappings = mode === "endpoint" ? endpointResponseMappings : {};
   const families = useMemo(
@@ -308,12 +347,14 @@ export function RunWizard({
           name,
           mode,
           metrics: selected.map((key) => ({key, config: metricConfigs[key] ?? {}})),
-          judge: {
-            connection_id: connectionId,
-            model,
-            embedding_connection_id: needsEmbedding ? embeddingConnectionId : null,
-            embedding_model: needsEmbedding ? embeddingModel : null,
-          },
+          judge: needsJudge
+            ? {
+                connection_id: connectionId,
+                model,
+                embedding_connection_id: needsEmbedding ? embeddingConnectionId : null,
+                embedding_model: needsEmbedding ? embeddingModel : null,
+              }
+            : null,
           endpoint_config,
         }),
       });
@@ -410,12 +451,12 @@ export function RunWizard({
 
           {Object.entries(familyGroups).map(([family, familyMetrics]) => (
             <div className="metric-family" key={family}>
-              <h3>{title(family)}</h3>
+              <h3 className="metric-family-heading">{title(family)}</h3>
               {Object.entries(
                 Object.groupBy(familyMetrics ?? [], (metric) => metric.framework),
               ).map(([framework, frameworkMetrics]) => (
                 <fieldset key={framework}>
-                  <legend>{framework}</legend>
+                  <legend className="metric-framework-label">{framework}</legend>
                   <div className="metric-grid">
                     {frameworkMetrics?.map((metric) => {
                       const missing = missingRequirements(
@@ -424,9 +465,13 @@ export function RunWizard({
                         activeResponseMappings,
                         metricConfigs[metric.key] ?? metric.default_config,
                       );
+                      const sampleKindConflict = Boolean(
+                        selectedSampleKind && metric.sample_kind !== selectedSampleKind,
+                      );
+                      const disabled = sampleKindConflict || missing.length > 0;
                       return (
                         <div
-                          className={`metric-card ${missing.length ? "disabled" : ""}`}
+                          className={`metric-card ${disabled ? "disabled" : ""}`}
                           key={metric.key}
                         >
                           <label className="metric-choice">
@@ -437,7 +482,7 @@ export function RunWizard({
                                   ? metric.key
                                   : metric.display_name
                               }
-                              disabled={Boolean(missing.length)}
+                              disabled={disabled}
                               checked={selected.includes(metric.key)}
                               onChange={(event) =>
                                 toggleMetric(metric, event.target.checked)
@@ -447,7 +492,9 @@ export function RunWizard({
                               <strong>{metric.display_name}</strong>
                               <small>{metric.description}</small>
                             </span>
-                            {missing.length > 0 && (
+                            {sampleKindConflict ? (
+                              <em>Choose in a separate run</em>
+                            ) : missing.length > 0 && (
                               <em>Needs mapping: {missing.join(", ")}</em>
                             )}
                           </label>
@@ -462,9 +509,7 @@ export function RunWizard({
           ))}
           {!visibleMetrics.length && (
             <p className="metric-picker-empty">
-              {activeCategory === "agentic"
-                ? "Agentic metrics arrive in the next phase."
-                : "No metrics match these filters."}
+              No metrics match these filters.
             </p>
           )}
         </div>
@@ -520,56 +565,95 @@ export function RunWizard({
                 required
               />
             </label>
-            <label>
-              Trusted context JSONPath
-              <input
-                value={contextJsonpath}
-                onChange={(event) => setContextJsonpath(event.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-            <label className="wide">
-              Retrieval contexts JSONPath
-              <input
-                value={retrievalContextsJsonpath}
-                onChange={(event) => setRetrievalContextsJsonpath(event.target.value)}
-                placeholder="Optional"
-              />
-            </label>
+            {endpointSampleKind === "agent_trace" ? (
+              <>
+                <label className="wide">
+                  Agent trace JSONPath
+                  <input
+                    value={agentTraceJsonpath}
+                    onChange={(event) => setAgentTraceJsonpath(event.target.value)}
+                    placeholder="$.trace"
+                  />
+                </label>
+                {needsAgentToolMappings && (
+                  <>
+                    <label>
+                      Tools called JSONPath
+                      <input
+                        value={toolsCalledJsonpath}
+                        onChange={(event) => setToolsCalledJsonpath(event.target.value)}
+                        placeholder="$.tools_called"
+                      />
+                    </label>
+                    <label>
+                      Expected tools JSONPath
+                      <input
+                        value={expectedToolsJsonpath}
+                        onChange={(event) => setExpectedToolsJsonpath(event.target.value)}
+                        placeholder="$.expected_tools"
+                      />
+                    </label>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <label>
+                  Trusted context JSONPath
+                  <input
+                    value={contextJsonpath}
+                    onChange={(event) => setContextJsonpath(event.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+                <label className="wide">
+                  Retrieval contexts JSONPath
+                  <input
+                    value={retrievalContextsJsonpath}
+                    onChange={(event) => setRetrievalContextsJsonpath(event.target.value)}
+                    placeholder="Optional"
+                  />
+                </label>
+              </>
+            )}
           </div>
         )}
       </section>
 
       <section className="panel">
-        <p className="step">04 · Judge and launch</p>
+        <p className="step">04 · {needsJudge ? "Judge and launch" : "Launch"}</p>
         <div className="form-grid">
           <label>Run name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
-          <label>
-            LLM Connection
-            <select value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>
-              {!connections.length && <option value="">No connections — add one in Settings</option>}
-              {connections.map((item) => (
-                <option value={item.id} key={item.id}>{item.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            LLM Model
-            {modelsError ? (
-              <span className="notice error">
-                {modelsError}{" "}
-                <button type="button" className="ghost" onClick={() => setModelsReload((n) => n + 1)}>Retry</button>
-              </span>
-            ) : (
-              <SearchableSelect
-                options={chatModelOptions}
-                value={model}
-                onChange={setModel}
-                placeholder={modelsLoading ? "Loading models…" : "Select a model"}
-                disabled={modelsLoading}
-              />
-            )}
-          </label>
+          {needsJudge && (
+            <>
+              <label>
+                LLM Connection
+                <select value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>
+                  {!connections.length && <option value="">No connections — add one in Settings</option>}
+                  {connections.map((item) => (
+                    <option value={item.id} key={item.id}>{item.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                LLM Model
+                {modelsError ? (
+                  <span className="notice error">
+                    {modelsError}{" "}
+                    <button type="button" className="ghost" onClick={() => setModelsReload((n) => n + 1)}>Retry</button>
+                  </span>
+                ) : (
+                  <SearchableSelect
+                    options={chatModelOptions}
+                    value={model}
+                    onChange={setModel}
+                    placeholder={modelsLoading ? "Loading models…" : "Select a model"}
+                    disabled={modelsLoading}
+                  />
+                )}
+              </label>
+            </>
+          )}
           {needsEmbedding && (
             <>
               <label>
@@ -614,9 +698,8 @@ export function RunWizard({
             !staticReady ||
             selectedHaveMissingRequirements ||
             selectedConfigInvalid ||
-            !connectionId ||
-            !model ||
-            (isCustom && Boolean(modelsError)) ||
+            (needsJudge && (!connectionId || !model)) ||
+            (needsJudge && isCustom && Boolean(modelsError)) ||
             (needsEmbedding && (!embeddingConnectionId || !embeddingModel)) ||
             (needsEmbedding && embeddingIsCustom && Boolean(embeddingModelsError))
           }

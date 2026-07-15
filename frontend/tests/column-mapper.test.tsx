@@ -54,6 +54,36 @@ describe("ColumnMapper", () => {
     expect(within(actualOutput).getByRole("option", {name: "contexts"})).toBeInTheDocument();
   });
 
+  it("adds one compact Agentic mapping group", () => {
+    render(
+      <ColumnMapper
+        dataset={{
+          id: "dataset-agent",
+          name: "Agent traces",
+          format: "jsonl",
+          row_count: 1,
+          storage_path: "hidden",
+          schema_map: {},
+          preview: [
+            {
+              prompt: "Book a flight",
+              answer: "Booked",
+              trace: [{type: "tool", name: "book"}],
+              called: [{name: "book"}],
+              expected: ["book"],
+            },
+          ],
+        }}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("group", {name: "Agentic"})).toBeInTheDocument();
+    expect(screen.getByLabelText("Agent trace")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tools called")).toBeInTheDocument();
+    expect(screen.getByLabelText("Expected tools")).toBeInTheDocument();
+  });
+
   it("saves semantic fields mapped to uploaded columns", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
