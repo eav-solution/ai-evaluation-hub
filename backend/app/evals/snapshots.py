@@ -78,6 +78,7 @@ def build_ingestion_definition_snapshot(
     selected: list[tuple[MetricAdapter, dict[str, Any]]],
     judge_connection: ProviderConnection | None,
     judge_model: str | None,
+    sample_kind: str = "agent_trace",
 ) -> dict[str, Any]:
     resources: dict[str, dict[str, str]] = {}
     if judge_connection is not None and judge_model is not None:
@@ -89,7 +90,7 @@ def build_ingestion_definition_snapshot(
             "deepeval": version("deepeval"),
         },
         "sample": {
-            "kind": "agent_trace",
+            "kind": sample_kind,
             "normalizer_revision": NORMALIZER_REVISION,
         },
         "metrics": [

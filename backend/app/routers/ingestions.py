@@ -2,7 +2,8 @@ import hashlib
 import json
 import logging
 import uuid
-from typing import Annotated, Any
+from collections.abc import Callable
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -12,7 +13,7 @@ from starlette.responses import JSONResponse
 
 from app import storage
 from app.deps import get_db, get_workspace
-from app.evals.samples import AgentTraceSample
+from app.evals.samples import AgentTraceSample, ConversationSample
 from app.evals.snapshots import build_ingestion_definition_snapshot
 from app.models import (
     EvaluationArtifact,
@@ -33,8 +34,10 @@ router = APIRouter(
     tags=["ingestions"],
 )
 logger = logging.getLogger(__name__)
-MAX_AGENT_TRACE_BYTES = 5 * 1024 * 1024
-_TOO_LARGE_DETAIL = "Agent trace exceeds the 5 MiB limit"
+MAX_INGESTION_BYTES = 5 * 1024 * 1024
+_TOO_LARGE_DETAIL = "Ingestion payload exceeds the 5 MiB limit"
+_LIMITED_SUFFIXES = ("/ingestions/agent-traces", "/ingestions/conversations")
+_KIND_LABELS = {"agent_trace": "Agent trace", "conversation": "Conversation"}
 
 
 class AgentTraceBodyLimitMiddleware:
@@ -45,7 +48,7 @@ class AgentTraceBodyLimitMiddleware:
         if (
             scope["type"] != "http"
             or scope["method"] != "POST"
-            or not scope["path"].endswith("/ingestions/agent-traces")
+            or not scope["path"].endswith(_LIMITED_SUFFIXES)
         ):
             await self.app(scope, receive, send)
             return
@@ -57,7 +60,7 @@ class AgentTraceBodyLimitMiddleware:
             messages.append(message)
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > MAX_AGENT_TRACE_BYTES:
+                if received > MAX_INGESTION_BYTES:
                     response = JSONResponse(
                         status_code=413,
                         content={"detail": _TOO_LARGE_DETAIL},
@@ -77,7 +80,7 @@ class AgentTraceBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
-class AgentTraceIngestionIn(BaseModel):
+class IngestionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
@@ -86,7 +89,7 @@ class AgentTraceIngestionIn(BaseModel):
     judge: JudgeIn | None = None
 
 
-def _request_hash(body: AgentTraceIngestionIn) -> str:
+def _request_hash(body: IngestionIn) -> str:
     encoded = json.dumps(
         body.model_dump(mode="json"),
         ensure_ascii=False,
@@ -103,7 +106,7 @@ def _encode_sample(sample: dict[str, Any]) -> bytes:
         separators=(",", ":"),
         sort_keys=True,
     ).encode()
-    if len(encoded) > MAX_AGENT_TRACE_BYTES:
+    if len(encoded) > MAX_INGESTION_BYTES:
         raise HTTPException(
             status_code=413,
             detail=_TOO_LARGE_DETAIL,
@@ -141,9 +144,9 @@ def _existing_association(
     return artifact, run
 
 
-def _sample_or_422(raw: dict[str, Any]) -> AgentTraceSample:
+def _validated_sample_or_422(raw: dict[str, Any], model):
     try:
-        return AgentTraceSample.model_validate(raw)
+        return model.model_validate(raw)
     except ValidationError as exc:
         errors = []
         for error in exc.errors(
@@ -157,6 +160,14 @@ def _sample_or_422(raw: dict[str, Any]) -> AgentTraceSample:
         raise HTTPException(status_code=422, detail=errors) from exc
 
 
+def _sample_or_422(raw: dict[str, Any]) -> AgentTraceSample:
+    return _validated_sample_or_422(raw, AgentTraceSample)
+
+
+def _conversation_or_422(raw: dict[str, Any]) -> ConversationSample:
+    return _validated_sample_or_422(raw, ConversationSample)
+
+
 def _delete_losing_upload(key: str) -> None:
     try:
         storage.delete_object(key)
@@ -164,15 +175,15 @@ def _delete_losing_upload(key: str) -> None:
         logger.exception("Failed to clean up ingestion upload %s", key)
 
 
-@router.post("/agent-traces", status_code=202)
-def ingest_agent_trace(
-    body: AgentTraceIngestionIn,
+def _ingest_sample(
+    *,
+    body: IngestionIn,
     response: Response,
-    idempotency_key: Annotated[
-        str, Header(alias="Idempotency-Key", min_length=1, max_length=255)
-    ],
-    ws: Workspace = Depends(get_workspace),
-    db: Session = Depends(get_db),
+    idempotency_key: str,
+    ws: Workspace,
+    db: Session,
+    sample_kind: Literal["agent_trace", "conversation"],
+    validate_sample: Callable[[dict[str, Any]], Any],
 ) -> dict[str, str]:
     raw_sample = _encode_sample(body.sample)
     request_hash = _request_hash(body)
@@ -181,14 +192,17 @@ def ingest_agent_trace(
         response.status_code = 200
         return _out(*existing)
 
-    _sample_or_422(body.sample)
-    selected, resource_roles, sample_kind = _validate_metric_selection(
+    validate_sample(body.sample)
+    selected, resource_roles, selected_kind = _validate_metric_selection(
         body.metrics, set(body.sample)
     )
-    if sample_kind != "agent_trace":
+    if selected_kind != sample_kind:
         raise HTTPException(
             status_code=422,
-            detail="Agent trace ingestion only accepts agent_trace metrics",
+            detail=(
+                f"{_KIND_LABELS[sample_kind]} ingestion only accepts "
+                f"{sample_kind} metrics"
+            ),
         )
 
     needs_judge = "judge" in resource_roles
@@ -222,7 +236,7 @@ def ingest_agent_trace(
     artifact = EvaluationArtifact(
         id=artifact_id,
         workspace_id=ws.id,
-        sample_kind="agent_trace",
+        sample_kind=sample_kind,
         idempotency_key=idempotency_key,
         request_hash=request_hash,
         storage_path=storage_path,
@@ -243,6 +257,7 @@ def ingest_agent_trace(
             selected=selected,
             judge_connection=connection,
             judge_model=body.judge.model if body.judge is not None else None,
+            sample_kind=sample_kind,
         ),
         status="pending",
         progress_total=1,
@@ -284,3 +299,45 @@ def ingest_agent_trace(
             run.id,
         )
     return _out(artifact, run)
+
+
+@router.post("/agent-traces", status_code=202)
+def ingest_agent_trace(
+    body: IngestionIn,
+    response: Response,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=1, max_length=255)
+    ],
+    ws: Workspace = Depends(get_workspace),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return _ingest_sample(
+        body=body,
+        response=response,
+        idempotency_key=idempotency_key,
+        ws=ws,
+        db=db,
+        sample_kind="agent_trace",
+        validate_sample=_sample_or_422,
+    )
+
+
+@router.post("/conversations", status_code=202)
+def ingest_conversation(
+    body: IngestionIn,
+    response: Response,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=1, max_length=255)
+    ],
+    ws: Workspace = Depends(get_workspace),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    return _ingest_sample(
+        body=body,
+        response=response,
+        idempotency_key=idempotency_key,
+        ws=ws,
+        db=db,
+        sample_kind="conversation",
+        validate_sample=_conversation_or_422,
+    )
