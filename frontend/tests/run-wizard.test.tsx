@@ -5,7 +5,7 @@ import {fireEvent, render, screen, waitFor, within} from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
-import {RunWizard} from "@/components/RunWizard";
+import {missingRequirements, RunWizard} from "@/components/RunWizard";
 import {api} from "@/lib/api";
 import type {Metric, ProviderConnection} from "@/lib/types";
 
@@ -244,6 +244,36 @@ const agenticPreset = {
   metric_keys: [taskCompletion.key, agentLoop.key],
 };
 
+const conversationDataset = {
+  ...dataset,
+  id: "dataset-conversation",
+  name: "Support chats",
+  schema_map: {turns: "history"},
+};
+
+const conversationCompleteness: Metric = {
+  ...biasMetric,
+  key: "deepeval.conversation_completeness",
+  family: "conversational",
+  display_name: "Conversation Completeness",
+  description: "Completed the conversation",
+  sample_kind: "conversation",
+  requires: ["turns"],
+};
+
+const turnRelevancy: Metric = {
+  ...conversationCompleteness,
+  key: "deepeval.turn_relevancy",
+  display_name: "Turn Relevancy",
+};
+
+const roleAdherence: Metric = {
+  ...conversationCompleteness,
+  key: "deepeval.role_adherence",
+  display_name: "Role Adherence",
+  requires: ["turns", "chatbot_role"],
+};
+
 beforeEach(() => {
   mockedApi.mockReset();
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -371,6 +401,71 @@ describe("RunWizard", () => {
 
     expect(screen.getByLabelText("Bias")).toBeDisabled();
     expect(screen.getByText("Choose in a separate run")).toBeInTheDocument();
+  });
+
+  it("enables mapped conversation metrics and explains missing role data", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[conversationDataset]}
+        initialMetrics={[conversationCompleteness, roleAdherence]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    expect(screen.getByLabelText("Conversation Completeness")).toBeEnabled();
+    expect(screen.getByLabelText("Role Adherence")).toBeDisabled();
+    expect(screen.getByText("Needs mapping: chatbot_role")).toBeInTheDocument();
+  });
+
+  it("keeps conversation, single-turn, and trace metrics in separate runs", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[
+          {
+            ...conversationDataset,
+            schema_map: {
+              turns: "history",
+              input: "prompt",
+              actual_output: "answer",
+              agent_trace: "trace",
+            },
+          },
+        ]}
+        initialMetrics={[turnRelevancy, biasMetric, agentLoop]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Turn Relevancy"));
+    expect(screen.getByLabelText("Bias")).toBeDisabled();
+    expect(screen.getByText("Choose in a separate run")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name: "Agentic"}));
+    expect(screen.getByLabelText("Agent Loop Detection")).toBeDisabled();
+  });
+
+  it("shows judge and conversation endpoint mappings", () => {
+    render(
+      <RunWizard
+        workspaceId="workspace-1"
+        initialDatasets={[conversationDataset]}
+        initialMetrics={[conversationCompleteness]}
+        initialConnections={[nativeConnection]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Conversation Completeness"));
+    expect(screen.getByLabelText("LLM Connection")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Live endpoint"));
+    expect(screen.getByLabelText("Turns JSONPath")).toBeInTheDocument();
+    expect(screen.getByLabelText("MCP events JSONPath")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Agent trace JSONPath")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tools called JSONPath")).not.toBeInTheDocument();
+  });
+
+  it("requires turns when checking a conversation metric without a dataset", () => {
+    expect(missingRequirements(conversationCompleteness)).toEqual(["turns"]);
   });
 
   it("launches deterministic Agentic metrics without judge controls or payload", async () => {

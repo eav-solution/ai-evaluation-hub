@@ -17,7 +17,12 @@ export function missingRequirements(
   responseMappings: Record<string, string> = {},
   config: Record<string, unknown> = metric.default_config,
 ) {
-  const sampleRequirements = metric.sample_kind === "agent_trace" ? ["agent_trace"] : [];
+  const sampleRequirements =
+    metric.sample_kind === "agent_trace"
+      ? ["agent_trace"]
+      : metric.sample_kind === "conversation"
+        ? ["turns"]
+        : [];
   if (!dataset) return Array.from(new Set([...sampleRequirements, ...metric.requires]));
   const fields = new Set(Object.keys(dataset.schema_map));
   if (fields.has("contexts")) {
@@ -91,6 +96,8 @@ export function RunWizard({
   const [agentTraceJsonpath, setAgentTraceJsonpath] = useState("");
   const [toolsCalledJsonpath, setToolsCalledJsonpath] = useState("");
   const [expectedToolsJsonpath, setExpectedToolsJsonpath] = useState("");
+  const [turnsJsonpath, setTurnsJsonpath] = useState("");
+  const [mcpEventsJsonpath, setMcpEventsJsonpath] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -199,8 +206,14 @@ export function RunWizard({
   }, [embeddingConnection?.id, embeddingConnection?.connection_type, workspaceId]);
 
   const endpointResponseMappings = useMemo(
-    () => endpointSampleKind === "agent_trace"
+    () => endpointSampleKind === "conversation"
       ? {
+          actual_output: actualOutputJsonpath,
+          turns: turnsJsonpath,
+          mcp_events: mcpEventsJsonpath,
+        }
+      : endpointSampleKind === "agent_trace"
+        ? {
           actual_output: actualOutputJsonpath,
           agent_trace: agentTraceJsonpath,
           ...(needsAgentToolMappings
@@ -209,8 +222,8 @@ export function RunWizard({
                 expected_tools: expectedToolsJsonpath,
               }
             : {}),
-        }
-      : {
+          }
+        : {
           actual_output: actualOutputJsonpath,
           context: contextJsonpath,
           retrieval_contexts: retrievalContextsJsonpath,
@@ -221,9 +234,11 @@ export function RunWizard({
       contextJsonpath,
       endpointSampleKind,
       expectedToolsJsonpath,
+      mcpEventsJsonpath,
       needsAgentToolMappings,
       retrievalContextsJsonpath,
       toolsCalledJsonpath,
+      turnsJsonpath,
     ],
   );
   const activeResponseMappings = mode === "endpoint" ? endpointResponseMappings : {};
@@ -265,7 +280,10 @@ export function RunWizard({
         .map(([name]) => name),
     );
   }, [metrics]);
-  const staticReady = mode === "endpoint" || Boolean(dataset?.schema_map.actual_output);
+  const staticReady =
+    mode === "endpoint" ||
+    selectedSampleKind === "conversation" ||
+    Boolean(dataset?.schema_map.actual_output);
   const selectedHaveMissingRequirements = selected.some((key) => {
     const metric = metrics.find((item) => item.key === key);
     return !metric || missingRequirements(
@@ -565,7 +583,26 @@ export function RunWizard({
                 required
               />
             </label>
-            {endpointSampleKind === "agent_trace" ? (
+            {endpointSampleKind === "conversation" ? (
+              <>
+                <label className="wide">
+                  Turns JSONPath
+                  <input
+                    value={turnsJsonpath}
+                    onChange={(event) => setTurnsJsonpath(event.target.value)}
+                    placeholder="$.turns"
+                  />
+                </label>
+                <label className="wide">
+                  MCP events JSONPath
+                  <input
+                    value={mcpEventsJsonpath}
+                    onChange={(event) => setMcpEventsJsonpath(event.target.value)}
+                    placeholder="$.events (optional)"
+                  />
+                </label>
+              </>
+            ) : endpointSampleKind === "agent_trace" ? (
               <>
                 <label className="wide">
                   Agent trace JSONPath

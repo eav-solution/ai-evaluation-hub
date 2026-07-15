@@ -48,6 +48,24 @@ describe("DatasetsPage", () => {
             sample_kind: "agent_trace",
             requires: ["tools_called", "expected_tools"],
           },
+          {
+            key: "deepeval.conversation_completeness",
+            category: "general",
+            sample_kind: "conversation",
+            requires: ["turns"],
+          },
+          {
+            key: "deepeval.role_adherence",
+            category: "general",
+            sample_kind: "conversation",
+            requires: ["turns", "chatbot_role"],
+          },
+          {
+            key: "deepeval.mcp_task_completion",
+            category: "agentic",
+            sample_kind: "conversation",
+            requires: ["turns", "mcp_metadata"],
+          },
         ] as never;
       }
       if (path === "/api/workspaces/workspace-1/datasets") {
@@ -82,6 +100,22 @@ describe("DatasetsPage", () => {
               expected_tools: "expected",
             },
           },
+          {
+            id: "conversation-data",
+            name: "Support chats",
+            format: "jsonl",
+            row_count: 4,
+            storage_path: "hidden",
+            schema_map: {turns: "history"},
+          },
+          {
+            id: "mcp-data",
+            name: "MCP chats",
+            format: "jsonl",
+            row_count: 2,
+            storage_path: "hidden",
+            schema_map: {turns: "history", mcp_metadata: "servers"},
+          },
         ] as never;
       }
       return undefined as never;
@@ -95,6 +129,8 @@ describe("DatasetsPage", () => {
     expect(await screen.findByText("RAG examples")).toBeInTheDocument();
     expect(screen.getByText("General outputs")).toBeInTheDocument();
     expect(screen.getByText("Agent traces")).toBeInTheDocument();
+    expect(screen.getByText("Support chats")).toBeInTheDocument();
+    expect(screen.getByText("MCP chats")).toBeInTheDocument();
     const ragRow = screen.getByText("RAG examples").closest(".dataset-row");
     const generalRow = screen.getByText("General outputs").closest(".dataset-row");
     expect(ragRow).not.toBeNull();
@@ -108,6 +144,19 @@ describe("DatasetsPage", () => {
     expect(within(agentRow as HTMLElement).getByText("Agentic")).toBeInTheDocument();
     expect(within(agentRow as HTMLElement).getByText("General")).toBeInTheDocument();
     expect(within(agentRow as HTMLElement).getByText("4 compatible metrics")).toBeInTheDocument();
+    const conversationRow = screen.getByText("Support chats").closest(".dataset-row");
+    const mcpRow = screen.getByText("MCP chats").closest(".dataset-row");
+    expect(
+      within(conversationRow as HTMLElement).getByText("General"),
+    ).toBeInTheDocument();
+    expect(
+      within(conversationRow as HTMLElement).getByText("3 compatible metrics"),
+    ).toBeInTheDocument();
+    expect(within(mcpRow as HTMLElement).getByText("General")).toBeInTheDocument();
+    expect(within(mcpRow as HTMLElement).getByText("Agentic")).toBeInTheDocument();
+    expect(
+      within(mcpRow as HTMLElement).getByText("4 compatible metrics"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", {name: "RAG"}));
     expect(screen.getByText("RAG examples")).toBeInTheDocument();
@@ -116,9 +165,11 @@ describe("DatasetsPage", () => {
     await user.click(screen.getByRole("button", {name: "General"}));
     expect(screen.queryByText("RAG examples")).not.toBeInTheDocument();
     expect(screen.getByText("General outputs")).toBeInTheDocument();
+    expect(screen.getByText("Support chats")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", {name: "Agentic"}));
     expect(screen.getByText("Agent traces")).toBeInTheDocument();
+    expect(screen.getByText("MCP chats")).toBeInTheDocument();
     expect(screen.queryByText("General outputs")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", {name: "All"}));

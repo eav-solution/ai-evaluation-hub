@@ -19,6 +19,14 @@ const agentFields = [
   ["expected_tools", "Expected tools"],
 ] as const;
 
+const conversationFields = [
+  ["turns", "Turns"],
+  ["chatbot_role", "Chatbot role"],
+  ["conversation_context", "Conversation context"],
+  ["mcp_metadata", "MCP metadata"],
+  ["mcp_events", "MCP events"],
+] as const;
+
 export function ColumnMapper({
   dataset,
   onSave,
@@ -75,7 +83,17 @@ export function ColumnMapper({
           {mappingFields(agentFields)}
         </div>
       </fieldset>
-      <button className="primary" onClick={() => onSave(mapping)} disabled={!mapping.input}>
+      <fieldset className="mapping-group">
+        <legend>Conversational / MCP</legend>
+        <div className="mapping-grid">
+          {mappingFields(conversationFields)}
+        </div>
+      </fieldset>
+      <button
+        className="primary"
+        onClick={() => onSave(mapping)}
+        disabled={!mapping.input && !mapping.turns}
+      >
         Save mapping
       </button>
       <div className="table-wrap">

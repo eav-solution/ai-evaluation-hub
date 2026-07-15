@@ -16,23 +16,29 @@ export function datasetCapabilities(dataset: Dataset): DatasetCapability[] {
   const capabilities: DatasetCapability[] = [];
   if (fields.has("retrieval_contexts")) capabilities.push("rag");
   if (
-    fields.has("input") &&
-    fields.has("actual_output") &&
-    fields.has("agent_trace")
+    (fields.has("input") &&
+      fields.has("actual_output") &&
+      fields.has("agent_trace")) ||
+    (fields.has("turns") && fields.has("mcp_metadata"))
   ) {
     capabilities.push("agentic");
   }
-  if (fields.has("input") && fields.has("actual_output")) capabilities.push("general");
+  if (
+    (fields.has("input") && fields.has("actual_output")) ||
+    fields.has("turns")
+  ) {
+    capabilities.push("general");
+  }
   return capabilities;
 }
 
 export function compatibleMetricCount(dataset: Dataset, metrics: Metric[]) {
   const fields = availableFields(dataset);
-  const capabilities = new Set(datasetCapabilities(dataset));
   return metrics.filter(
     (metric) =>
       (metric.sample_kind === "single_turn" ||
-        (metric.sample_kind === "agent_trace" && capabilities.has("agentic"))) &&
+        (metric.sample_kind === "agent_trace" && fields.has("agent_trace")) ||
+        (metric.sample_kind === "conversation" && fields.has("turns"))) &&
       missingMetricRequirements(metric, fields).length === 0,
   ).length;
 }

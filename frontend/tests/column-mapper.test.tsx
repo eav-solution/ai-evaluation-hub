@@ -84,6 +84,39 @@ describe("ColumnMapper", () => {
     expect(screen.getByLabelText("Expected tools")).toBeInTheDocument();
   });
 
+  it("maps a conversation dataset without single-turn columns", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <ColumnMapper
+        dataset={{
+          id: "dataset-conversation",
+          name: "Support chats",
+          format: "jsonl",
+          row_count: 1,
+          storage_path: "hidden",
+          schema_map: {},
+          preview: [{history: [{role: "user", content: "Hi"}]}],
+        }}
+        onSave={onSave}
+      />,
+    );
+
+    expect(
+      screen.getByRole("group", {name: "Conversational / MCP"}),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Turns")).toBeInTheDocument();
+    expect(screen.getByLabelText("Chatbot role")).toBeInTheDocument();
+    expect(screen.getByLabelText("Conversation context")).toBeInTheDocument();
+    expect(screen.getByLabelText("MCP metadata")).toBeInTheDocument();
+    expect(screen.getByLabelText("MCP events")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Turns"), "history");
+    await user.click(screen.getByRole("button", {name: "Save mapping"}));
+
+    expect(onSave).toHaveBeenCalledWith({turns: "history"});
+  });
+
   it("saves semantic fields mapped to uploaded columns", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
