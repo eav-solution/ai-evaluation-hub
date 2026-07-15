@@ -65,6 +65,9 @@ def test_current_metric_capability_metadata_matches_the_approved_catalog():
         "deepeval.pii_leakage": ("general", "text_safety"),
         "deepeval.bias": ("general", "text_safety"),
         "deepeval.geval": ("general", "text_safety"),
+        "deepeval.task_completion": ("agentic", "trace"),
+        "deepeval.agent_loop_detection": ("agentic", "trace"),
+        "deepeval.tool_correctness": ("agentic", "tools"),
     }
 
     assert {
@@ -82,3 +85,53 @@ def test_catalog_exposes_dynamic_requirements_and_legacy_aliases():
     assert METRICS["deepeval.hallucination"].catalog_entry()[
         "requirement_aliases"
     ] == {"context": ["contexts"]}
+
+
+def test_agentic_adapters_publish_sample_requirements_and_resources():
+    from app.evals.registry import METRICS
+
+    assert len(METRICS) == 18
+    assert METRICS["deepeval.task_completion"].requires == frozenset(
+        {"agent_trace"}
+    )
+    assert METRICS["deepeval.task_completion"].resources({}) == frozenset(
+        {"judge"}
+    )
+    assert METRICS["deepeval.tool_correctness"].requires == frozenset(
+        {"tools_called", "expected_tools"}
+    )
+    assert METRICS["deepeval.tool_correctness"].resources({}) == frozenset()
+    assert METRICS["deepeval.agent_loop_detection"].resources({}) == frozenset()
+    assert all(
+        METRICS[key].sample_kind == "agent_trace"
+        for key in (
+            "deepeval.task_completion",
+            "deepeval.tool_correctness",
+            "deepeval.agent_loop_detection",
+        )
+    )
+
+
+def test_agentic_adapter_config_is_generated_and_validated():
+    from app.evals.registry import METRICS
+
+    task = METRICS["deepeval.task_completion"]
+    assert task.default_config()["task"] is None
+    task_types = task.config_schema()["properties"]["task"]["anyOf"]
+    assert {item.get("maxLength") for item in task_types} == {None, 10_000}
+
+    tools = METRICS["deepeval.tool_correctness"]
+    assert tools.default_config()["evaluation_params"] == []
+    assert tools.default_config()["should_exact_match"] is False
+
+    loops = METRICS["deepeval.agent_loop_detection"]
+    assert loops.default_config()["repetition_threshold"] == 3
+    assert loops.default_config()["similarity_threshold"] == 0.85
+    with pytest.raises(ValidationError, match="At least one loop check"):
+        loops.validate_config(
+            {
+                "check_tool_repetition": False,
+                "check_reasoning_stagnation": False,
+                "check_call_graph_cycles": False,
+            }
+        )

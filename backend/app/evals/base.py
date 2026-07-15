@@ -2,11 +2,11 @@ from dataclasses import dataclass, field
 from math import isfinite
 from typing import Any, Callable, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.evals.json_schema import model_from_object_schema
 
-from app.evals.samples import SingleTurnSample
+from app.evals.samples import EvaluationSample, SingleTurnSample
 
 
 EvalRow = SingleTurnSample
@@ -109,6 +109,38 @@ class JsonCorrectnessConfig(DeepEvalMetricConfig):
         return value
 
 
+class TaskCompletionConfig(DeepEvalMetricConfig):
+    task: str | None = Field(default=None, min_length=1, max_length=10_000)
+
+
+class ToolCorrectnessConfig(DeepEvalMetricConfig):
+    evaluation_params: list[Literal["input_parameters", "output"]] = Field(
+        default_factory=list
+    )
+    should_exact_match: bool = False
+    should_consider_ordering: bool = False
+
+
+class AgentLoopDetectionConfig(DeepEvalMetricConfig):
+    repetition_threshold: int = Field(default=3, ge=2, le=100)
+    similarity_threshold: float = Field(default=0.85, ge=0, le=1)
+    check_tool_repetition: bool = True
+    check_reasoning_stagnation: bool = True
+    check_call_graph_cycles: bool = True
+
+    @model_validator(mode="after")
+    def at_least_one_check(self):
+        if not any(
+            (
+                self.check_tool_repetition,
+                self.check_reasoning_stagnation,
+                self.check_call_graph_cycles,
+            )
+        ):
+            raise ValueError("At least one loop check must be enabled")
+        return self
+
+
 @dataclass(frozen=True)
 class JudgeConfig:
     provider: str  # 'openai' | 'anthropic' | 'openai_compatible'
@@ -161,8 +193,8 @@ class MetricAdapter(Protocol):
 
     def score(
         self,
-        row: EvalRow,
-        judge: JudgeConfig,
+        row: EvaluationSample,
+        judge: JudgeConfig | None,
         config: dict | None = None,
     ) -> MetricScore: ...
 
@@ -174,7 +206,7 @@ class CallableAdapter:
     display_name: str
     description: str
     requires: frozenset[str]
-    scorer: Callable[[EvalRow, JudgeConfig, dict | None], MetricScore]
+    scorer: Callable[[EvaluationSample, JudgeConfig | None, dict | None], MetricScore]
     revision: str = "1"
     category: MetricCategory = "general"
     family: str = "text_safety"
@@ -253,8 +285,8 @@ class CallableAdapter:
 
     def score(
         self,
-        row: EvalRow,
-        judge: JudgeConfig,
+        row: EvaluationSample,
+        judge: JudgeConfig | None,
         config: dict | None = None,
     ) -> MetricScore:
         result = self.scorer(row, judge, config)

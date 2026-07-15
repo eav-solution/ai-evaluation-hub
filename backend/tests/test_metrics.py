@@ -14,6 +14,9 @@ EXPECTED_DIRECTIONS = {
     "deepeval.pii_leakage": "lower_is_better",
     "deepeval.bias": "lower_is_better",
     "deepeval.geval": "higher_is_better",
+    "deepeval.task_completion": "higher_is_better",
+    "deepeval.agent_loop_detection": "higher_is_better",
+    "deepeval.tool_correctness": "higher_is_better",
 }
 
 
@@ -62,6 +65,10 @@ def test_metric_presets_publish_approved_rag_sets(client):
         "deepeval.contextual_relevancy",
         "ragas.context_precision",
         "ragas.context_recall",
+    ]
+    assert presets["agentic"]["metric_keys"] == [
+        "deepeval.task_completion",
+        "deepeval.agent_loop_detection",
     ]
     assert all(
         {"id", "display_name", "description", "category", "mode_hint", "metric_keys"}

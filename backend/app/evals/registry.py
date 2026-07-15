@@ -1,4 +1,5 @@
 from app.evals.base import (
+    AgentLoopDetectionConfig,
     CallableAdapter,
     DeepEvalMetricConfig,
     GEvalConfig,
@@ -7,6 +8,8 @@ from app.evals.base import (
     MetricConfig,
     PromptAlignmentConfig,
     ResourceRole,
+    TaskCompletionConfig,
+    ToolCorrectnessConfig,
 )
 from app.evals.metric_info import METRIC_INFO
 from pydantic import BaseModel
@@ -35,6 +38,7 @@ def _adapter(
     requirement_config_field: str | None = None,
     requirement_exclusions: set[str] | None = None,
     requirement_aliases: dict[str, set[str]] | None = None,
+    sample_kind: str = "single_turn",
 ) -> CallableAdapter:
     framework, metric = key.split(".", 1)
     resolved_config_model = config_model or (
@@ -42,7 +46,7 @@ def _adapter(
         if key == "deepeval.geval"
         else (DeepEvalMetricConfig if framework == "deepeval" else MetricConfig)
     )
-    resource_roles = frozenset(resources or {"judge"})
+    resource_roles = frozenset({"judge"} if resources is None else resources)
     return CallableAdapter(
         key=key,
         framework=framework,
@@ -50,6 +54,7 @@ def _adapter(
         family=family,
         display_name=display_name,
         description=description,
+        sample_kind=sample_kind,
         requires=frozenset(requires or set()),
         scorer=_framework_scorer(framework, metric),
         config_model=resolved_config_model,
@@ -185,6 +190,39 @@ METRICS = {
             config_model=GEvalConfig,
             requirement_config_field="evaluation_fields",
             requirement_exclusions={"input", "actual_output"},
+        ),
+        _adapter(
+            "deepeval.task_completion",
+            "Task Completion",
+            "Whether the agent trace completed the requested task.",
+            "agentic",
+            "trace",
+            {"agent_trace"},
+            {"judge"},
+            config_model=TaskCompletionConfig,
+            sample_kind="agent_trace",
+        ),
+        _adapter(
+            "deepeval.agent_loop_detection",
+            "Agent Loop Detection",
+            "Whether the agent avoided repetitive or cyclic execution.",
+            "agentic",
+            "trace",
+            {"agent_trace"},
+            set(),
+            config_model=AgentLoopDetectionConfig,
+            sample_kind="agent_trace",
+        ),
+        _adapter(
+            "deepeval.tool_correctness",
+            "Tool Correctness",
+            "Whether the agent called the expected tools correctly.",
+            "agentic",
+            "tools",
+            {"tools_called", "expected_tools"},
+            set(),
+            config_model=ToolCorrectnessConfig,
+            sample_kind="agent_trace",
         ),
     ]
 }

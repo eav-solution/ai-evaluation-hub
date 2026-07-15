@@ -228,3 +228,22 @@ def deepeval_llm(judge: JudgeConfig):
             return f"{judge.provider}:{judge.model}"
 
     return ProviderLLM()
+
+
+def deterministic_deepeval_llm():
+    from deepeval.models.base_model import DeepEvalBaseLLM
+
+    class DeterministicLLM(DeepEvalBaseLLM):
+        def load_model(self):
+            return self
+
+        def generate(self, *args, **kwargs):
+            raise RuntimeError("Deterministic metric attempted to call an LLM")
+
+        async def a_generate(self, *args, **kwargs):
+            raise RuntimeError("Deterministic metric attempted to call an LLM")
+
+        def get_model_name(self):
+            return "evalhub-deterministic"
+
+    return DeterministicLLM()

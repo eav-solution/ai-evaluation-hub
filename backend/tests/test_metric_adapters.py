@@ -233,3 +233,141 @@ def test_unsupported_judge_provider():
 
     with pytest.raises(ValueError, match="Unsupported judge provider"):
         ragas_llm(JudgeConfig("unknown", "model", "key"))
+
+
+def test_deepeval_agentic_metric_constructors_use_validated_config(monkeypatch):
+    from deepeval import metrics
+    from deepeval.test_case import ToolCallParams
+
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    captured = {}
+
+    class Metric:
+        pass
+
+    def factory(name):
+        def build(**kwargs):
+            captured[name] = kwargs
+            return Metric()
+
+        return build
+
+    for class_name in (
+        "TaskCompletionMetric",
+        "ToolCorrectnessMetric",
+        "AgentLoopDetectionMetric",
+    ):
+        monkeypatch.setattr(metrics, class_name, factory(class_name))
+    monkeypatch.setattr(deepeval, "deepeval_llm", lambda judge: "judge")
+
+    deepeval._make_metric(
+        "task_completion",
+        JudgeConfig("openai", "model", "key"),
+        {
+            "threshold": 0.6,
+            "include_reason": False,
+            "strict_mode": True,
+            "task": "Book the flight",
+        },
+    )
+    deepeval._make_metric(
+        "tool_correctness",
+        None,
+        {
+            "threshold": 0.7,
+            "include_reason": True,
+            "strict_mode": False,
+            "evaluation_params": ["input_parameters", "output"],
+            "should_exact_match": True,
+            "should_consider_ordering": True,
+        },
+    )
+    deepeval._make_metric(
+        "agent_loop_detection",
+        None,
+        {
+            "threshold": 0.8,
+            "include_reason": True,
+            "strict_mode": False,
+            "repetition_threshold": 4,
+            "similarity_threshold": 0.9,
+            "check_tool_repetition": True,
+            "check_reasoning_stagnation": False,
+            "check_call_graph_cycles": True,
+        },
+    )
+
+    assert captured["TaskCompletionMetric"]["model"] == "judge"
+    assert captured["TaskCompletionMetric"]["task"] == "Book the flight"
+    assert captured["ToolCorrectnessMetric"]["evaluation_params"] == [
+        ToolCallParams.INPUT_PARAMETERS,
+        ToolCallParams.OUTPUT,
+    ]
+    assert captured["ToolCorrectnessMetric"]["model"].get_model_name() == (
+        "evalhub-deterministic"
+    )
+    assert captured["ToolCorrectnessMetric"]["should_exact_match"] is True
+    assert captured["AgentLoopDetectionMetric"]["repetition_threshold"] == 4
+    assert captured["AgentLoopDetectionMetric"]["similarity_threshold"] == 0.9
+    assert captured["AgentLoopDetectionMetric"]["check_reasoning_stagnation"] is False
+
+
+@pytest.mark.parametrize(
+    "metric_name", ["task_completion", "tool_correctness", "agent_loop_detection"]
+)
+def test_deepeval_agentic_scoring_converts_tools_and_trace(monkeypatch, metric_name):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+    from app.evals.samples import AgentTraceSample
+
+    captured = {}
+
+    class Metric:
+        reason = "complete"
+
+        def measure(self, test_case, **kwargs):
+            captured["test_case"] = test_case
+            return 0.9
+
+        def is_successful(self):
+            return True
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: Metric())
+    sample = AgentTraceSample.model_validate(
+        {
+            "input": "Find weather",
+            "actual_output": "Sunny",
+            "agent_trace": [
+                {
+                    "type": "agent",
+                    "name": "planner",
+                    "children": [{"type": "tool", "name": "weather"}],
+                }
+            ],
+            "tools_called": [
+                {
+                    "name": "weather",
+                    "arguments": {"city": "Paris"},
+                    "output": "Sunny",
+                }
+            ],
+            "expected_tools": ["weather"],
+        }
+    )
+    judge = (
+        JudgeConfig("openai", "model", "key")
+        if metric_name == "task_completion"
+        else None
+    )
+
+    result = deepeval.score_metric(metric_name, sample, judge, {})
+
+    test_case = captured["test_case"]
+    assert test_case.tools_called[0].input_parameters == {"city": "Paris"}
+    assert test_case.tools_called[0].output == "Sunny"
+    assert test_case.expected_tools[0].name == "weather"
+    assert test_case._trace_dict["children"][0]["children"][0]["type"] == "tool"
+    assert result.score == 0.9
+    assert result.passed is True

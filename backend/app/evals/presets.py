@@ -30,6 +30,17 @@ PRESETS: dict[str, dict[str, Any]] = {
             "ragas.context_recall",
         ],
     },
+    "agentic": {
+        "id": "agentic",
+        "display_name": "Agentic essentials",
+        "description": "Core task completion and loop checks for agent traces.",
+        "category": "agentic",
+        "mode_hint": "static",
+        "metric_keys": [
+            "deepeval.task_completion",
+            "deepeval.agent_loop_detection",
+        ],
+    },
 }
 
 

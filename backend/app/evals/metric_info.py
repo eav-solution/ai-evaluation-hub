@@ -716,4 +716,91 @@ METRIC_INFO: dict[str, MetricInfo] = {
         ),
         "required_data": ["input", "actual_output"],
     },
+    "deepeval.task_completion": {
+        "meaning": "Measures whether the agent completed the requested task based on its trace and final outcome.",
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Read the requested task and the recorded agent trace.",
+            "Use the evaluator model to compare the agent outcome with the task.",
+            "Normalize the completion verdict to the 0-1 range.",
+        ],
+        "formula": "Task completion = judge-assessed completion score from 0 to 1",
+        "examples": [
+            _example(
+                "Completed booking",
+                [("Task", "Book the requested flight"), ("Outcome", "Booking confirmed")],
+                [("pass", "The trace reaches a confirmed booking outcome.")],
+                "Completed task -> high score",
+            ),
+            _example(
+                "Stopped before completion",
+                [("Task", "Book the requested flight"), ("Outcome", "Only searched flights")],
+                [("fail", "The trace ends before a booking is made.")],
+                "Incomplete task -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Planning", "Define an explicit success condition before the agent starts."),
+            ("Execution", "Verify the final tool result before reporting completion."),
+        ),
+        "required_data": ["input", "actual_output", "agent_trace"],
+    },
+    "deepeval.agent_loop_detection": {
+        "meaning": "Measures whether an agent trace avoids repeated tools, stagnant reasoning, and call-graph cycles.",
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Walk the nested agent trace in execution order.",
+            "Check enabled repetition, reasoning-stagnation, and cycle rules.",
+            "Return a high score when no configured loop is detected.",
+        ],
+        "formula": "Loop score = 1 when no configured loop is detected, otherwise 0",
+        "examples": [
+            _example(
+                "Progressing trace",
+                [("Trace", "search -> compare -> book")],
+                [("pass", "Each step advances toward the task outcome.")],
+                "No loop detected = 1.00",
+            ),
+            _example(
+                "Repeated tool loop",
+                [("Trace", "search -> search -> search")],
+                [("fail", "The same tool repeats past the configured limit.")],
+                "Loop detected = 0.00",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Control flow", "Stop or replan after repeated calls with unchanged inputs."),
+            ("State", "Record completed steps so the agent can detect cycles."),
+        ),
+        "required_data": ["input", "actual_output", "agent_trace"],
+    },
+    "deepeval.tool_correctness": {
+        "meaning": "Measures whether the agent called the expected tools, optionally including arguments, outputs, and order.",
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Compare called tool names with the expected tool list.",
+            "Compare configured arguments, outputs, exactness, and ordering rules.",
+            "Combine the matches into a score from zero to one.",
+        ],
+        "formula": "Tool correctness = matched expected tool calls / expected tool calls",
+        "examples": [
+            _example(
+                "Expected tool used",
+                [("Expected", "weather(city=Paris)"), ("Called", "weather(city=Paris)")],
+                [("pass", "Tool name and configured arguments match.")],
+                "1 / 1 matched = 1.00",
+            ),
+            _example(
+                "Wrong tool used",
+                [("Expected", "weather"), ("Called", "web_search")],
+                [("fail", "The called tool is not the expected tool.")],
+                "0 / 1 matched = 0.00",
+            ),
+        ],
+        "improvement_tips": _tips(
+            ("Tool selection", "Describe each tool's purpose and selection boundary clearly."),
+            ("Arguments", "Validate required arguments before executing a tool call."),
+        ),
+        "required_data": ["input", "actual_output", "tools_called", "expected_tools"],
+    },
 }
