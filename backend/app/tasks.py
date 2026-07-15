@@ -10,11 +10,14 @@ from app.datasets import parse_dataset
 from app.db import SessionLocal
 from app.documents import text_storage_key
 from app.endpoints import call_endpoint, extract_response_fields
-from app.evals.base import EvalRow, JudgeConfig
+from app.evals.base import EvalRow, JudgeConfig, SampleKind
+from app.evals.normalizers import normalize_sample
 from app.evals.registry import METRICS
+from app.evals.samples import AgentTraceSample, EvaluationSample, SingleTurnSample
 from app.models import (
     Dataset,
     Document,
+    EvaluationArtifact,
     GenerationJob,
     GenerationRecord,
     OutboxEvent,
@@ -118,23 +121,20 @@ def _eval_row(
     mapping: dict,
     actual_output=_MISSING,
 ) -> EvalRow:
-    input_value = source.get(mapping["input"])
-    actual = (
-        source.get(mapping["actual_output"])
-        if actual_output is _MISSING
-        else actual_output
+    canonical_map = dict(mapping)
+    if "retrieval_contexts" not in canonical_map and "contexts" in canonical_map:
+        canonical_map["retrieval_contexts"] = canonical_map["contexts"]
+    overrides = (
+        None if actual_output is _MISSING else {"actual_output": actual_output}
     )
-    if input_value is None or actual is None:
-        raise ValueError("Mapped input or actual_output value is missing")
-    return EvalRow(
-        input=str(input_value),
-        actual_output=str(actual),
-        expected_output=_text(source.get(mapping.get("expected_output"))),
-        context=_contexts(source.get(mapping.get("context"))),
-        retrieval_contexts=_contexts(
-            source.get(mapping.get("retrieval_contexts") or mapping.get("contexts"))
-        ),
+    sample = normalize_sample(
+        "single_turn",
+        source,
+        canonical_map,
+        overrides=overrides,
     )
+    assert isinstance(sample, SingleTurnSample)
+    return sample
 
 
 def _run_schema_map(run: Run, dataset: Dataset) -> dict[str, str]:
@@ -154,6 +154,74 @@ def _run_dataset_source(run: Run, dataset: Dataset) -> tuple[str, str]:
         if isinstance(storage_path, str) and isinstance(dataset_format, str):
             return storage_path, dataset_format
     return dataset.storage_path, dataset.format
+
+
+def _load_run_source(db, run: Run) -> tuple[list[dict], dict[str, str]]:
+    if run.dataset_id is not None:
+        dataset = db.get(Dataset, run.dataset_id)
+        if dataset is None:
+            raise ValueError("Dataset not found")
+        schema_map = _run_schema_map(run, dataset)
+        storage_path, dataset_format = _run_dataset_source(run, dataset)
+        return (
+            parse_dataset(
+                storage.get_object(storage_path),
+                dataset_format,
+                settings.max_dataset_rows,
+            ),
+            schema_map,
+        )
+
+    if run.artifact_id is None:
+        raise ValueError("Run source is missing")
+    artifact = db.get(EvaluationArtifact, run.artifact_id)
+    if artifact is None:
+        raise ValueError("Evaluation artifact not found")
+    try:
+        source = json.loads(storage.get_object(artifact.storage_path))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("Evaluation artifact is not valid JSON") from exc
+    if not isinstance(source, dict):
+        raise ValueError("Evaluation artifact must contain one sample object")
+    return [source], {field: field for field in source}
+
+
+def _run_sample_kind(run: Run, metric_configs: list[dict]) -> SampleKind:
+    sample = (run.definition_snapshot or {}).get("sample")
+    snapshot_kind = sample.get("kind") if isinstance(sample, dict) else None
+    if snapshot_kind in {"single_turn", "agent_trace", "conversation", "multimodal"}:
+        return snapshot_kind
+    kinds = {METRICS[config["key"]].sample_kind for config in metric_configs}
+    if len(kinds) != 1:
+        raise ValueError("Run metrics do not share one sample kind")
+    return next(iter(kinds))
+
+
+def _resolve_run_judge(db, run: Run) -> JudgeConfig | None:
+    if not run.judge_config:
+        return None
+    runtime = resolve_connection(db, run.workspace_id, run.judge_config)
+    embedding_connection_id = run.judge_config.get("embedding_connection_id")
+    embedding_runtime = (
+        resolve_connection(
+            db, run.workspace_id, {"connection_id": embedding_connection_id}
+        )
+        if embedding_connection_id
+        else runtime
+    )
+    model = run.judge_config.get("model")
+    if not model:
+        raise ValueError("Judge model is missing")
+    return JudgeConfig(
+        provider=runtime.connection_type,
+        model=model,
+        api_key=runtime.api_key,
+        base_url=runtime.base_url,
+        embedding_model=run.judge_config.get("embedding_model"),
+        embedding_provider=embedding_runtime.connection_type,
+        embedding_base_url=embedding_runtime.base_url,
+        embedding_api_key=embedding_runtime.api_key,
+    )
 
 
 def _validated_metric_configs(run: Run) -> list[dict]:
@@ -264,16 +332,72 @@ def _result_complete(result: RunResult, metric_keys: list[str]) -> bool:
     )
 
 
-def _stored_row(result: RunResult) -> EvalRow:
+def _sample_details(sample: EvaluationSample) -> dict | None:
+    if isinstance(sample, AgentTraceSample):
+        return {
+            "sample": {
+                "kind": "agent_trace",
+                "agent_trace": [
+                    event.model_dump(mode="json") for event in sample.agent_trace
+                ],
+                "tools_called": [
+                    tool.model_dump(mode="json") for tool in sample.tools_called
+                ],
+                "expected_tools": [
+                    tool.model_dump(mode="json") for tool in sample.expected_tools
+                ],
+                "metadata": sample.metadata,
+                "tags": sample.tags,
+                "source": (
+                    sample.source.model_dump(mode="json") if sample.source else None
+                ),
+                "normalizer_revision": sample.normalizer_revision,
+            }
+        }
+    if sample.context is not None:
+        return {"sample": {"context": sample.context}}
+    return None
+
+
+def _write_result_sample(result: RunResult, sample: EvaluationSample) -> None:
+    result.input = sample.input
+    result.actual = sample.actual_output
+    if isinstance(sample, SingleTurnSample):
+        result.expected = sample.expected_output
+        result.contexts = sample.retrieval_contexts
+    else:
+        result.expected = None
+        result.contexts = None
+    result.details = _sample_details(sample)
+
+
+def _stored_sample(result: RunResult, sample_kind: SampleKind) -> EvaluationSample:
     details = result.details if isinstance(result.details, dict) else {}
     sample = details.get("sample") if isinstance(details.get("sample"), dict) else {}
-    return EvalRow(
-        input=result.input,
-        actual_output=result.actual or "",
-        expected_output=result.expected,
-        context=_contexts(sample.get("context")),
-        retrieval_contexts=result.contexts,
-    )
+    if sample_kind == "agent_trace":
+        return AgentTraceSample.model_validate(
+            {
+                "kind": "agent_trace",
+                "input": result.input,
+                "actual_output": result.actual or "",
+                "agent_trace": sample.get("agent_trace"),
+                "tools_called": sample.get("tools_called", []),
+                "expected_tools": sample.get("expected_tools", []),
+                "metadata": sample.get("metadata", {}),
+                "tags": sample.get("tags", []),
+                "source": sample.get("source"),
+                "normalizer_revision": sample.get("normalizer_revision", "1"),
+            }
+        )
+    if sample_kind == "single_turn":
+        return EvalRow(
+            input=result.input,
+            actual_output=result.actual or "",
+            expected_output=result.expected,
+            context=_contexts(sample.get("context")),
+            retrieval_contexts=result.contexts,
+        )
+    raise ValueError(f"Stored sample kind '{sample_kind}' is not supported")
 
 
 @celery_app.task(name="app.tasks.evaluate_run")
@@ -285,36 +409,10 @@ def evaluate_run(run_id: str) -> None:
         return
     run, attempt = claimed
     try:
-        dataset = db.get(Dataset, run.dataset_id)
-        if dataset is None:
-            raise ValueError("Dataset not found")
-        schema_map = _run_schema_map(run, dataset)
-        runtime = resolve_connection(db, run.workspace_id, run.judge_config)
-        embedding_connection_id = run.judge_config.get("embedding_connection_id")
-        if embedding_connection_id:
-            embedding_runtime = resolve_connection(
-                db, run.workspace_id, {"connection_id": embedding_connection_id}
-            )
-        else:
-            # Legacy/unspecified snapshots: embeddings share the judge connection.
-            embedding_runtime = runtime
-        judge = JudgeConfig(
-            provider=runtime.connection_type,
-            model=run.judge_config["model"],
-            api_key=runtime.api_key,
-            base_url=runtime.base_url,
-            embedding_model=run.judge_config.get("embedding_model"),
-            embedding_provider=embedding_runtime.connection_type,
-            embedding_base_url=embedding_runtime.base_url,
-            embedding_api_key=embedding_runtime.api_key,
-        )
-        storage_path, dataset_format = _run_dataset_source(run, dataset)
-        source_rows = parse_dataset(
-            storage.get_object(storage_path),
-            dataset_format,
-            settings.max_dataset_rows,
-        )
+        source_rows, schema_map = _load_run_source(db, run)
         metric_configs = _validated_metric_configs(run)
+        sample_kind = _run_sample_kind(run, metric_configs)
+        judge = _resolve_run_judge(db, run)
         metric_keys = [config["key"] for config in metric_configs]
         stored_results = {
             result.row_index: result
@@ -337,55 +435,40 @@ def evaluate_run(run_id: str) -> None:
                 row = None
                 result = stored_results.get(index)
                 if result is None:
-                    try:
-                        row = _eval_row(
-                            source,
-                            schema_map,
-                            "" if run.mode == "endpoint" else _MISSING,
-                        )
-                    except Exception as exc:
-                        result = RunResult(
-                            workspace_id=run.workspace_id,
-                            run_id=run.id,
-                            row_index=index,
-                            input=_text(source.get(schema_map.get("input"))) or "",
-                            expected=None,
-                            actual=None,
-                            contexts=None,
-                            scores={},
-                            error=str(exc),
-                            latency_ms=round((time.perf_counter() - started) * 1000),
-                        )
-                        db.add(result)
-                        db.commit()
-                    else:
-                        result = RunResult(
-                            workspace_id=run.workspace_id,
-                            run_id=run.id,
-                            row_index=index,
-                            input=row.input,
-                            expected=row.expected_output,
-                            actual=(
-                                None if run.mode == "endpoint" else row.actual_output
-                            ),
-                            contexts=row.contexts,
-                            scores={},
-                            details=(
-                                {"sample": {"context": row.context}}
-                                if row.context is not None
-                                else None
-                            ),
-                            error=(
-                                _INTERRUPTED_ENDPOINT
-                                if run.mode == "endpoint"
-                                else None
-                            ),
-                            latency_ms=None,
-                        )
-                        db.add(result)
-                        run.heartbeat_at = datetime.now(timezone.utc)
-                        db.commit()
-                        if run.mode == "endpoint":
+                    if run.mode == "endpoint":
+                        try:
+                            request_row = _eval_row(source, schema_map, "")
+                        except Exception as exc:
+                            result = RunResult(
+                                workspace_id=run.workspace_id,
+                                run_id=run.id,
+                                row_index=index,
+                                input=_text(source.get(schema_map.get("input"))) or "",
+                                scores={},
+                                error=str(exc),
+                                latency_ms=round(
+                                    (time.perf_counter() - started) * 1000
+                                ),
+                            )
+                            db.add(result)
+                            db.commit()
+                        else:
+                            result = RunResult(
+                                workspace_id=run.workspace_id,
+                                run_id=run.id,
+                                row_index=index,
+                                input=request_row.input,
+                                expected=request_row.expected_output,
+                                actual=None,
+                                contexts=request_row.retrieval_contexts,
+                                scores={},
+                                details=_sample_details(request_row),
+                                error=_INTERRUPTED_ENDPOINT,
+                                latency_ms=None,
+                            )
+                            db.add(result)
+                            run.heartbeat_at = datetime.now(timezone.utc)
+                            db.commit()
                             try:
                                 if run.endpoint_config is None:
                                     raise ValueError(
@@ -393,7 +476,7 @@ def evaluate_run(run_id: str) -> None:
                                     )
                                 answer, payload, endpoint_latency = call_endpoint(
                                     run.endpoint_config,
-                                    row,
+                                    request_row,
                                     encrypted_headers=True,
                                 )
                             except Exception as exc:
@@ -407,54 +490,82 @@ def evaluate_run(run_id: str) -> None:
                                 if run.status != "running" or run.attempt != attempt:
                                     return
                                 result.actual = answer
-                                result.error = None
                                 result.latency_ms = round(endpoint_latency)
-                                optional_mappings = {
-                                    key: path
-                                    for key, path in (
-                                        run.endpoint_config.get("response_mappings")
-                                        or {}
-                                    ).items()
-                                    if key != "actual_output"
-                                }
-                                response_fields = {"actual_output": answer}
-                                if optional_mappings:
-                                    response_fields.update(
-                                        extract_response_fields(
-                                            payload,
-                                            {"response_mappings": optional_mappings},
+                                try:
+                                    optional_mappings = {
+                                        key: path
+                                        for key, path in (
+                                            run.endpoint_config.get(
+                                                "response_mappings"
+                                            )
+                                            or {}
+                                        ).items()
+                                        if key != "actual_output"
+                                    }
+                                    response_fields = {"actual_output": answer}
+                                    if optional_mappings:
+                                        response_fields.update(
+                                            extract_response_fields(
+                                                payload,
+                                                {
+                                                    "response_mappings": optional_mappings
+                                                },
+                                            )
                                         )
+                                    row = normalize_sample(
+                                        sample_kind,
+                                        source,
+                                        schema_map,
+                                        overrides=response_fields,
+                                        source_ref={"row_index": index},
                                     )
-                                row = EvalRow(
-                                    input=row.input,
-                                    actual_output=response_fields["actual_output"],
-                                    expected_output=row.expected_output,
-                                    context=_contexts(
-                                        response_fields.get("context", row.context)
-                                    ),
-                                    retrieval_contexts=_contexts(
-                                        response_fields.get(
-                                            "retrieval_contexts",
-                                            row.retrieval_contexts,
-                                        )
-                                    ),
-                                )
-                                result.actual = row.actual_output
-                                result.contexts = row.retrieval_contexts
-                                result.details = (
-                                    {"sample": {"context": row.context}}
-                                    if row.context is not None
-                                    else None
-                                )
+                                except Exception as exc:
+                                    result.error = str(exc)
+                                else:
+                                    _write_result_sample(result, row)
+                                    result.error = None
                                 db.commit()
-                        else:
-                            result.latency_ms = round(
-                                (time.perf_counter() - started) * 1000
+                    else:
+                        try:
+                            row = normalize_sample(
+                                sample_kind,
+                                source,
+                                schema_map,
+                                source_ref={"row_index": index},
                             )
+                        except Exception as exc:
+                            result = RunResult(
+                                workspace_id=run.workspace_id,
+                                run_id=run.id,
+                                row_index=index,
+                                input=_text(source.get(schema_map.get("input"))) or "",
+                                scores={},
+                                error=str(exc),
+                                latency_ms=round(
+                                    (time.perf_counter() - started) * 1000
+                                ),
+                            )
+                            db.add(result)
+                            db.commit()
+                        else:
+                            result = RunResult(
+                                workspace_id=run.workspace_id,
+                                run_id=run.id,
+                                row_index=index,
+                                input=row.input,
+                                scores={},
+                                error=None,
+                                latency_ms=round(
+                                    (time.perf_counter() - started) * 1000
+                                ),
+                            )
+                            _write_result_sample(result, row)
+                            db.add(result)
+                            run.heartbeat_at = datetime.now(timezone.utc)
                             db.commit()
                     stored_results[index] = result
                 elif result.error is None:
-                    row = _stored_row(result)
+                    row = _stored_sample(result, sample_kind)
 
                 if result.error is None and row is not None:
                     for config in metric_configs:
