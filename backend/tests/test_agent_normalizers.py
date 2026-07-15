@@ -234,3 +234,58 @@ def test_normalize_conversation_merges_endpoint_overrides_and_keeps_metadata():
     assert sample.mcp_events[0].type == "prompt"
     assert sample.metadata == {"note": "n1"}
     assert sample.tags == ["prod"]
+
+
+def test_normalize_multimodal_from_csv_json_and_plain_text():
+    from app.evals.normalizers import normalize_sample
+
+    sample = normalize_sample(
+        "multimodal",
+        {
+            "q": "Describe the chart",
+            "a": (
+                '[{"type":"text","text":"It rises"},{"type":"image","asset_id":"a1"}]'
+            ),
+        },
+        {"input": "q", "actual_output": "a"},
+    )
+
+    assert sample.kind == "multimodal"
+    assert sample.input[0].text == "Describe the chart"
+    assert sample.actual_output[1].asset_id == "a1"
+
+
+def test_normalize_multimodal_preserves_native_content_blocks():
+    from app.evals.normalizers import normalize_sample
+
+    sample = normalize_sample(
+        "multimodal",
+        {
+            "q": [{"type": "image", "asset_id": "a1"}],
+            "a": [{"type": "text", "text": "It rises"}],
+        },
+        {"input": "q", "actual_output": "a"},
+    )
+
+    assert sample.input[0].asset_id == "a1"
+    assert sample.actual_output[0].text == "It rises"
+
+
+def test_normalize_multimodal_requires_both_fields_and_names_bad_json():
+    from app.evals.normalizers import normalize_sample
+
+    with pytest.raises(ValueError, match="Mapped input value is missing"):
+        normalize_sample(
+            "multimodal",
+            {"a": "x"},
+            {"actual_output": "a"},
+        )
+    with pytest.raises(
+        ValueError,
+        match="Invalid actual_output in column 'a'",
+    ):
+        normalize_sample(
+            "multimodal",
+            {"q": "t", "a": "[not json"},
+            {"input": "q", "actual_output": "a"},
+        )

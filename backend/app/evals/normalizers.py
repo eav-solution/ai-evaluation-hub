@@ -6,6 +6,7 @@ from app.evals.samples import (
     AgentTraceSample,
     ConversationSample,
     EvaluationSample,
+    MultimodalSample,
     SampleSource,
     SingleTurnSample,
 )
@@ -37,6 +38,15 @@ def _structured_value(value: Any, field: str, column: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid {field} in column '{column}': expected valid JSON") from exc
+
+
+def _content_blocks(value: Any, field: str, column: str) -> Any:
+    decoded = value
+    if isinstance(value, str) and value.lstrip().startswith(("[", "{", '"')):
+        decoded = _structured_value(value, field, column)
+    if isinstance(decoded, str):
+        return [{"type": "text", "text": decoded}]
+    return decoded
 
 
 def _contexts(value: Any) -> list[str] | None:
@@ -118,6 +128,25 @@ def normalize_sample(
         raise ValueError("Mapped input value is missing")
     if actual_output is _MISSING or actual_output is None:
         raise ValueError("Mapped actual_output value is missing")
+
+    if sample_kind == "multimodal":
+        metadata = _mapped_value(source, schema_map, "metadata", response_fields)
+        tags = _mapped_value(source, schema_map, "tags", response_fields)
+        return MultimodalSample(
+            input=_content_blocks(
+                input_value,
+                "input",
+                schema_map.get("input", "input"),
+            ),
+            actual_output=_content_blocks(
+                actual_output,
+                "actual_output",
+                schema_map.get("actual_output", "actual_output"),
+            ),
+            metadata=({} if metadata is _MISSING or metadata is None else metadata),
+            tags=[] if tags is _MISSING or tags is None else tags,
+            source=_sample_source(source_ref),
+        )
 
     common = {
         "input": str(input_value),

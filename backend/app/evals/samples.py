@@ -1,6 +1,12 @@
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 NORMALIZER_REVISION = "1"
 
@@ -66,7 +72,16 @@ class TextBlock(StrictModel):
 
 class ImageBlock(StrictModel):
     type: Literal["image"] = "image"
-    asset_id: str = Field(min_length=1)
+    asset_id: str | None = Field(default=None, min_length=1)
+    url: str | None = Field(default=None, min_length=1)
+    mime_type: str | None = None
+    data_base64: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def exactly_one_source(self):
+        if bool(self.asset_id) == bool(self.url):
+            raise ValueError("Image blocks need exactly one of asset_id or url")
+        return self
 
 
 ContentBlock = Annotated[TextBlock | ImageBlock, Field(discriminator="type")]
@@ -133,6 +148,18 @@ class MultimodalSample(SampleMetadata):
     input: list[ContentBlock] = Field(min_length=1)
     actual_output: list[ContentBlock] = Field(min_length=1)
     expected_output: list[ContentBlock] | None = None
+
+
+def multimodal_input_preview(sample: "MultimodalSample") -> str:
+    return " ".join(
+        block.text for block in sample.input if block.type == "text"
+    ).strip()
+
+
+def multimodal_actual_preview(sample: "MultimodalSample") -> str:
+    return " ".join(
+        block.text for block in sample.actual_output if block.type == "text"
+    ).strip()
 
 
 EvaluationSample = Annotated[

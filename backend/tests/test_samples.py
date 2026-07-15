@@ -193,3 +193,62 @@ def test_conversation_previews_pick_first_user_and_last_assistant():
 
     assert conversation_input_preview(sample) == "first question"
     assert conversation_actual_preview(sample) == "final answer"
+
+
+def test_image_block_requires_exactly_one_source():
+    from app.evals.samples import ImageBlock
+
+    ImageBlock.model_validate({"type": "image", "asset_id": "a1"})
+    ImageBlock.model_validate({"type": "image", "url": "https://example.com/x.png"})
+    with pytest.raises(ValidationError):
+        ImageBlock.model_validate({"type": "image"})
+    with pytest.raises(ValidationError):
+        ImageBlock.model_validate(
+            {
+                "type": "image",
+                "asset_id": "a1",
+                "url": "https://x/y.png",
+            }
+        )
+
+
+def test_image_block_dump_excludes_hydrated_bytes():
+    from app.evals.samples import ImageBlock, MultimodalSample
+
+    block = ImageBlock(
+        asset_id="a1",
+        data_base64="aGVsbG8=",
+        mime_type="image/png",
+    )
+    dumped = block.model_dump(mode="json")
+    sample_dump = MultimodalSample(
+        input=[block],
+        actual_output=[{"type": "text", "text": "answer"}],
+    ).model_dump(mode="json")
+
+    assert "data_base64" not in dumped
+    assert dumped["asset_id"] == "a1"
+    assert "data_base64" not in sample_dump["input"][0]
+
+
+def test_multimodal_previews_concatenate_text_blocks():
+    from app.evals.samples import (
+        MultimodalSample,
+        multimodal_actual_preview,
+        multimodal_input_preview,
+    )
+
+    sample = MultimodalSample.model_validate(
+        {
+            "kind": "multimodal",
+            "input": [{"type": "text", "text": "Describe the chart"}],
+            "actual_output": [
+                {"type": "text", "text": "The chart shows"},
+                {"type": "image", "asset_id": "a1"},
+                {"type": "text", "text": "rising revenue."},
+            ],
+        }
+    )
+
+    assert multimodal_input_preview(sample) == "Describe the chart"
+    assert multimodal_actual_preview(sample) == ("The chart shows rising revenue.")
