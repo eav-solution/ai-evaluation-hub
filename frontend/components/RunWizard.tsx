@@ -520,7 +520,7 @@ export function RunWizard({
                               <small>{metric.description}</small>
                             </span>
                             {endpointIncompatible ? (
-                              <em>Static datasets or ingestion</em>
+                              <em>Static datasets or ingestion only</em>
                             ) : sampleKindConflict ? (
                               <em>Choose in a separate run</em>
                             ) : missing.length > 0 && (

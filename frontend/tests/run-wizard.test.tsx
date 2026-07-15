@@ -371,7 +371,7 @@ describe("RunWizard", () => {
 
     expect(screen.getByLabelText("Image Coherence")).toBeDisabled();
     expect(screen.getByLabelText("Image Helpfulness")).toBeDisabled();
-    expect(screen.getAllByText("Static datasets or ingestion")).toHaveLength(2);
+    expect(screen.getAllByText("Static datasets or ingestion only")).toHaveLength(2);
     expect(screen.getByRole("button", {name: "Launch evaluation"})).toBeDisabled();
   });
 
