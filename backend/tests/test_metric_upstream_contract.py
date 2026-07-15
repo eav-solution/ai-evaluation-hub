@@ -95,3 +95,31 @@ def test_deepeval_conversational_contract_is_available():
         )
     )
     assert find_spec("mcp") is None
+
+
+def test_deepeval_multimodal_contract_is_available():
+    import inspect
+
+    from deepeval.metrics import ImageCoherenceMetric, ImageHelpfulnessMetric
+    from deepeval.test_case import LLMTestCase, MLLMImage
+    from deepeval.test_case.llm_test_case import _MLLM_IMAGE_REGISTRY
+
+    for metric_class in (ImageCoherenceMetric, ImageHelpfulnessMetric):
+        params = inspect.signature(metric_class.__init__).parameters
+        assert "max_context_size" in params
+        assert "include_reason" not in params
+    image = MLLMImage(dataBase64="aGVsbG8=", mimeType="image/png")
+    try:
+        assert str(image).startswith("[DEEPEVAL:IMAGE:")
+        assert _MLLM_IMAGE_REGISTRY[image._id] is image
+        case = LLMTestCase(input="i", actual_output=f"look {image}")
+        assert case.multimodal is True
+        segments = MLLMImage.parse_multimodal_string(f"before {image} after")
+        assert [type(segment).__name__ for segment in segments] == [
+            "str",
+            "MLLMImage",
+            "str",
+        ]
+        assert segments[1] is image
+    finally:
+        _MLLM_IMAGE_REGISTRY.pop(image._id, None)

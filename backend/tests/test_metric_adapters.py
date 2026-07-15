@@ -599,3 +599,220 @@ def test_empty_mcp_inputs_fail_the_row(monkeypatch, metric_name, extra, message)
             JudgeConfig("openai", "model", "key"),
             {},
         )
+
+
+def _multimodal_sample():
+    from app.evals.samples import MultimodalSample
+
+    return MultimodalSample.model_validate(
+        {
+            "kind": "multimodal",
+            "input": [{"type": "text", "text": "Describe the chart"}],
+            "actual_output": [
+                {"type": "text", "text": "Revenue"},
+                {"type": "image", "asset_id": "a1"},
+            ],
+        }
+    )
+
+
+def _hydrated(sample):
+    for block in sample.actual_output + sample.input:
+        if block.type == "image":
+            block.data_base64 = "aGVsbG8="
+            block.mime_type = "image/png"
+    return sample
+
+
+def _capture_image_metric(monkeypatch, captured):
+    class FakeMetric:
+        def __init__(self, **kwargs):
+            captured["init_kwargs"] = kwargs
+            self.reason = "ok"
+
+        def measure(self, test_case, **kwargs):
+            captured["measure_args"] = (test_case,)
+            return 0.9
+
+        def is_successful(self):
+            return True
+
+    import deepeval.metrics
+
+    monkeypatch.setattr(deepeval.metrics, "ImageCoherenceMetric", FakeMetric)
+    monkeypatch.setattr(deepeval.metrics, "ImageHelpfulnessMetric", FakeMetric)
+
+
+def test_image_metric_receives_marker_test_case(monkeypatch):
+    from app.evals.deepeval import score_metric
+    from app.evals.base import JudgeConfig
+
+    captured: dict = {}
+    _capture_image_metric(monkeypatch, captured)
+    score_metric(
+        "image_coherence",
+        _hydrated(_multimodal_sample()),
+        JudgeConfig("openai", "model", "key"),
+        {"max_context_size": 500},
+    )
+    test_case = captured["measure_args"][0]
+    assert test_case.multimodal is True
+    assert "[DEEPEVAL:IMAGE:" in test_case.actual_output
+    assert captured["init_kwargs"]["max_context_size"] == 500
+    assert "include_reason" not in captured["init_kwargs"]
+
+
+def test_image_metric_without_actual_output_image_fails_before_measure(monkeypatch):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+    from app.evals.samples import MultimodalSample
+
+    measured = False
+
+    class Metric:
+        def measure(self, test_case, **kwargs):
+            nonlocal measured
+            measured = True
+            return 0.9
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: Metric())
+    input_only_image = MultimodalSample.model_validate(
+        {
+            "kind": "multimodal",
+            "input": [
+                {"type": "text", "text": "Describe"},
+                {"type": "image", "asset_id": "a1"},
+            ],
+            "actual_output": [
+                {"type": "text", "text": "a plain text answer"}
+            ],
+        }
+    )
+    _hydrated(input_only_image)
+
+    with pytest.raises(ValueError, match="image block in actual_output"):
+        deepeval.score_metric(
+            "image_coherence",
+            input_only_image,
+            JudgeConfig("openai", "model", "key"),
+            {},
+        )
+    assert measured is False
+
+
+def test_image_metric_with_unhydrated_block_fails_row(monkeypatch):
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: object())
+    with pytest.raises(ValueError, match="hydrated"):
+        deepeval.score_metric(
+            "image_helpfulness",
+            _multimodal_sample(),
+            JudgeConfig("openai", "model", "key"),
+            {},
+        )
+
+
+def test_image_metrics_require_judge():
+    from app.evals.deepeval import score_metric
+
+    with pytest.raises(ValueError, match="requires a judge"):
+        score_metric(
+            "image_coherence", _hydrated(_multimodal_sample()), None, {}
+        )
+
+
+def test_score_metric_releases_only_current_marker_registry_entries(monkeypatch):
+    from deepeval.test_case import MLLMImage
+    from deepeval.test_case.llm_test_case import _MLLM_IMAGE_REGISTRY
+
+    from app.evals.base import JudgeConfig
+    from app.evals.deepeval import score_metric
+
+    captured: dict = {}
+    _capture_image_metric(monkeypatch, captured)
+    unrelated = MLLMImage(dataBase64="dW5yZWxhdGVk", mimeType="image/png")
+    before = set(_MLLM_IMAGE_REGISTRY)
+    try:
+        score_metric(
+            "image_coherence",
+            _hydrated(_multimodal_sample()),
+            JudgeConfig("openai", "model", "key"),
+            {},
+        )
+        assert set(_MLLM_IMAGE_REGISTRY) == before
+        assert _MLLM_IMAGE_REGISTRY[unrelated._id] is unrelated
+    finally:
+        _MLLM_IMAGE_REGISTRY.pop(unrelated._id, None)
+
+
+def test_score_metric_releases_registry_when_test_case_construction_raises(
+    monkeypatch,
+):
+    from deepeval.test_case import MLLMImage
+    from deepeval.test_case.llm_test_case import _MLLM_IMAGE_REGISTRY
+
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+    from app.evals.samples import MultimodalSample
+
+    monkeypatch.setattr(deepeval, "_make_metric", lambda *args: object())
+    sample = MultimodalSample.model_validate(
+        {
+            "kind": "multimodal",
+            "input": [{"type": "image", "asset_id": "input-image"}],
+            "actual_output": [{"type": "image", "asset_id": "output-image"}],
+        }
+    )
+    sample.input[0].data_base64 = "aGVsbG8="
+    sample.input[0].mime_type = "image/png"
+    unrelated = MLLMImage(dataBase64="dW5yZWxhdGVk", mimeType="image/png")
+    before = set(_MLLM_IMAGE_REGISTRY)
+    try:
+        with pytest.raises(ValueError, match="hydrated"):
+            deepeval.score_metric(
+                "image_coherence",
+                sample,
+                JudgeConfig("openai", "model", "key"),
+                {},
+            )
+        assert set(_MLLM_IMAGE_REGISTRY) == before
+        assert _MLLM_IMAGE_REGISTRY[unrelated._id] is unrelated
+    finally:
+        _MLLM_IMAGE_REGISTRY.pop(unrelated._id, None)
+
+
+def test_score_metric_releases_registry_even_when_measure_raises(monkeypatch):
+    from deepeval.test_case import MLLMImage
+    from deepeval.test_case.llm_test_case import _MLLM_IMAGE_REGISTRY
+
+    from app.evals import deepeval
+    from app.evals.base import JudgeConfig
+
+    class ExplodingMetric:
+        def __init__(self, **kwargs):
+            pass
+
+        def measure(self, test_case, **kwargs):
+            raise RuntimeError("judge failed")
+
+    from deepeval import metrics as deepeval_metrics
+
+    monkeypatch.setattr(
+        deepeval_metrics, "ImageCoherenceMetric", ExplodingMetric
+    )
+    unrelated = MLLMImage(dataBase64="dW5yZWxhdGVk", mimeType="image/png")
+    before = set(_MLLM_IMAGE_REGISTRY)
+    try:
+        with pytest.raises(RuntimeError, match="judge failed"):
+            deepeval.score_metric(
+                "image_coherence",
+                _hydrated(_multimodal_sample()),
+                JudgeConfig("openai", "model", "key"),
+                {},
+            )
+        assert set(_MLLM_IMAGE_REGISTRY) == before
+        assert _MLLM_IMAGE_REGISTRY[unrelated._id] is unrelated
+    finally:
+        _MLLM_IMAGE_REGISTRY.pop(unrelated._id, None)

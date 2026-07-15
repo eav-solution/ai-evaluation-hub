@@ -12,6 +12,7 @@ from app.evals.samples import (
     AgentTraceSample,
     ConversationSample,
     EvaluationSample,
+    MultimodalSample,
     ToolCall,
     conversation_actual_preview,
     conversation_input_preview,
@@ -31,6 +32,8 @@ def _make_metric(name: str, judge: JudgeConfig | None, config: dict | None):
         FaithfulnessMetric,
         GEval,
         HallucinationMetric,
+        ImageCoherenceMetric,
+        ImageHelpfulnessMetric,
         JsonCorrectnessMetric,
         MCPTaskCompletionMetric,
         MCPUseMetric,
@@ -134,6 +137,20 @@ def _make_metric(name: str, judge: JudgeConfig | None, config: dict | None):
         "role_adherence": lambda: RoleAdherenceMetric(**reasoned),
         "mcp_task_completion": lambda: MCPTaskCompletionMetric(**reasoned),
         "mcp_use": lambda: MCPUseMetric(**reasoned),
+        "image_coherence": lambda: ImageCoherenceMetric(
+            max_context_size=options.get("max_context_size"),
+            threshold=options.get("threshold", 0.5),
+            strict_mode=options.get("strict_mode", False),
+            model=judge_model,
+            async_mode=False,
+        ),
+        "image_helpfulness": lambda: ImageHelpfulnessMetric(
+            max_context_size=options.get("max_context_size"),
+            threshold=options.get("threshold", 0.5),
+            strict_mode=options.get("strict_mode", False),
+            model=judge_model,
+            async_mode=False,
+        ),
     }
     try:
         return metrics[name]()
@@ -261,6 +278,59 @@ def _mcp_llm_test_case(sample: ConversationSample):
     return test_case
 
 
+def _marker_text(blocks, created_ids: list[str]) -> str:
+    from deepeval.test_case import MLLMImage
+
+    parts = []
+    for block in blocks:
+        if block.type == "text":
+            parts.append(block.text)
+            continue
+        if not block.data_base64 or not block.mime_type:
+            raise ValueError("Image block was not hydrated before scoring")
+        image = MLLMImage(
+            dataBase64=block.data_base64,
+            mimeType=block.mime_type,
+        )
+        created_ids.append(image._id)
+        parts.append(str(image))
+    return " ".join(parts)
+
+
+def _multimodal_test_case(
+    sample: MultimodalSample,
+) -> tuple[Any, list[str]]:
+    from deepeval.test_case import LLMTestCase
+
+    if not any(block.type == "image" for block in sample.actual_output):
+        # DeepEval 4.1.0 requires an image in actual_output, even when input
+        # already contains one.
+        raise ValueError(
+            "Multimodal sample needs at least one image block in actual_output"
+        )
+    created_ids: list[str] = []
+    try:
+        test_case = LLMTestCase(
+            input=_marker_text(sample.input, created_ids),
+            actual_output=_marker_text(sample.actual_output, created_ids),
+            metadata=sample.metadata,
+            tags=sample.tags,
+        )
+    except Exception:
+        _release_marker_images(created_ids)
+        raise
+    return test_case, created_ids
+
+
+def _release_marker_images(image_ids: list[str]) -> None:
+    # DeepEval keeps strong references in a module-level registry. Release
+    # only the marker images created by this score call.
+    from deepeval.test_case.llm_test_case import _MLLM_IMAGE_REGISTRY
+
+    for image_id in image_ids:
+        _MLLM_IMAGE_REGISTRY.pop(image_id, None)
+
+
 def _test_case(row: EvaluationSample, name: str):
     from deepeval.test_case import LLMTestCase
 
@@ -312,20 +382,27 @@ def score_metric(
 ) -> MetricScore:
 
     metric = _make_metric(name, judge, config)
-    test_case = _test_case(row, name)
-    value = float(
-        metric.measure(
-            test_case,
-            _show_indicator=False,
-            _log_metric_to_confident=False,
+    created_image_ids: list[str] = []
+    if isinstance(row, MultimodalSample):
+        test_case, created_image_ids = _multimodal_test_case(row)
+    else:
+        test_case = _test_case(row, name)
+    try:
+        value = float(
+            metric.measure(
+                test_case,
+                _show_indicator=False,
+                _log_metric_to_confident=False,
+            )
         )
-    )
-    usage, estimated_cost = usage_snapshot(getattr(metric, "model", None))
-    return MetricScore(
-        metric=f"deepeval.{name}",
-        score=value,
-        reason=metric.reason,
-        passed=bool(metric.is_successful()),
-        usage=usage,
-        estimated_cost=estimated_cost,
-    )
+        usage, estimated_cost = usage_snapshot(getattr(metric, "model", None))
+        return MetricScore(
+            metric=f"deepeval.{name}",
+            score=value,
+            reason=metric.reason,
+            passed=bool(metric.is_successful()),
+            usage=usage,
+            estimated_cost=estimated_cost,
+        )
+    finally:
+        _release_marker_images(created_image_ids)

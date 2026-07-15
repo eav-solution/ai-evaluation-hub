@@ -44,6 +44,17 @@ class DeepEvalMetricConfig(MetricConfig):
     )
 
 
+class ImageMetricConfig(MetricConfig):
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    strict_mode: bool = False
+    max_context_size: int | None = Field(
+        default=None,
+        ge=50,
+        le=10_000,
+        description="Characters of surrounding text shown to the judge per image.",
+    )
+
+
 class GEvalConfig(MetricConfig):
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     strict_mode: bool = False

@@ -41,6 +41,40 @@ PRESETS: dict[str, dict[str, Any]] = {
             "deepeval.agent_loop_detection",
         ],
     },
+    "conversational": {
+        "id": "conversational",
+        "display_name": "Conversational quality",
+        "description": "Completeness, relevancy, and role checks for conversations.",
+        "category": "general",
+        "mode_hint": "static",
+        "metric_keys": [
+            "deepeval.conversation_completeness",
+            "deepeval.turn_relevancy",
+            "deepeval.role_adherence",
+        ],
+    },
+    "mcp": {
+        "id": "mcp",
+        "display_name": "MCP quality",
+        "description": "Task completion and correct MCP use for conversations.",
+        "category": "agentic",
+        "mode_hint": "static",
+        "metric_keys": [
+            "deepeval.mcp_task_completion",
+            "deepeval.mcp_use",
+        ],
+    },
+    "multimodal": {
+        "id": "multimodal",
+        "display_name": "Multimodal quality",
+        "description": "Coherence and helpfulness checks for generated images.",
+        "category": "general",
+        "mode_hint": "static",
+        "metric_keys": [
+            "deepeval.image_coherence",
+            "deepeval.image_helpfulness",
+        ],
+    },
 }
 
 

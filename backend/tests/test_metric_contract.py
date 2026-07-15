@@ -2,6 +2,37 @@ import pytest
 from pydantic import ValidationError
 
 
+PHASE_4_KEYS = {
+    "ragas.faithfulness",
+    "ragas.answer_relevancy",
+    "ragas.context_relevance",
+    "ragas.context_precision",
+    "ragas.context_recall",
+    "deepeval.answer_relevancy",
+    "deepeval.faithfulness",
+    "deepeval.contextual_relevancy",
+    "deepeval.hallucination",
+    "deepeval.prompt_alignment",
+    "deepeval.json_correctness",
+    "deepeval.toxicity",
+    "deepeval.pii_leakage",
+    "deepeval.bias",
+    "deepeval.geval",
+    "deepeval.task_completion",
+    "deepeval.agent_loop_detection",
+    "deepeval.tool_correctness",
+    "deepeval.conversation_completeness",
+    "deepeval.turn_relevancy",
+    "deepeval.role_adherence",
+    "deepeval.mcp_task_completion",
+    "deepeval.mcp_use",
+}
+PHASE_5_KEYS = PHASE_4_KEYS | {
+    "deepeval.image_coherence",
+    "deepeval.image_helpfulness",
+}
+
+
 def test_adapter_exposes_generated_config_and_dynamic_resources():
     from app.evals.registry import METRICS
 
@@ -73,11 +104,14 @@ def test_current_metric_capability_metadata_matches_the_approved_catalog():
         "deepeval.role_adherence": ("general", "conversational"),
         "deepeval.mcp_task_completion": ("agentic", "mcp"),
         "deepeval.mcp_use": ("agentic", "mcp"),
+        "deepeval.image_coherence": ("general", "multimodal"),
+        "deepeval.image_helpfulness": ("general", "multimodal"),
     }
 
     assert {
         key: (adapter.category, adapter.family) for key, adapter in METRICS.items()
     } == expected
+    assert set(METRICS) == PHASE_5_KEYS
 
 
 def test_catalog_exposes_dynamic_requirements_and_legacy_aliases():
@@ -95,7 +129,7 @@ def test_catalog_exposes_dynamic_requirements_and_legacy_aliases():
 def test_agentic_adapters_publish_sample_requirements_and_resources():
     from app.evals.registry import METRICS
 
-    assert len(METRICS) == 23
+    assert len(METRICS) == len(PHASE_5_KEYS)
     assert METRICS["deepeval.task_completion"].requires == frozenset(
         {"agent_trace"}
     )
@@ -179,3 +213,21 @@ def test_conversation_window_defaults_follow_upstream():
     relevancy = METRICS["deepeval.turn_relevancy"].default_config()
     assert completeness["window_size"] == 3
     assert relevancy["window_size"] == 10
+
+
+def test_multimodal_adapter_metadata():
+    from app.evals.registry import METRICS
+
+    for key in ("deepeval.image_coherence", "deepeval.image_helpfulness"):
+        adapter = METRICS[key]
+        assert adapter.category == "general"
+        assert adapter.family == "multimodal"
+        assert adapter.sample_kind == "multimodal"
+        assert adapter.resources({}) == frozenset({"judge", "multimodal"})
+        assert adapter.requirements({}) == frozenset({"input", "actual_output"})
+        assert adapter.info["score_direction"] == "higher_is_better"
+        assert adapter.default_config() == {
+            "threshold": 0.5,
+            "strict_mode": False,
+            "max_context_size": None,
+        }

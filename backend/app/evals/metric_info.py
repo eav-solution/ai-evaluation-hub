@@ -963,4 +963,112 @@ METRIC_INFO: dict[str, MetricInfo] = {
         ),
         "required_data": ["turns", "mcp_metadata", "mcp_events"],
     },
+    "deepeval.image_coherence": {
+        "meaning": (
+            "Measures whether each image in the actual output is coherent with "
+            "its surrounding response text."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Read the input and the actual_output content blocks.",
+            "Inspect each actual_output image with its surrounding text.",
+            "Aggregate the judge's image-text coherence ratings.",
+        ],
+        "formula": "Image coherence = mean judge coherence rating across output images",
+        "examples": [
+            _example(
+                "Chart matches its explanation",
+                [
+                    ("Input", "Summarize quarterly revenue"),
+                    ("actual_output", "Revenue rose 12%, followed by a matching chart"),
+                ],
+                [
+                    (
+                        "pass",
+                        "The chart and surrounding text describe the same trend.",
+                    )
+                ],
+                "Consistent image and text -> high score",
+            ),
+            _example(
+                "Image contradicts the response",
+                [
+                    ("Input", "Show the declining error rate"),
+                    ("actual_output", "Text says errors fell, but the chart rises"),
+                ],
+                [
+                    (
+                        "fail",
+                        "The image contradicts the claim in its surrounding text.",
+                    )
+                ],
+                "Contradictory image and text -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            (
+                "Generation",
+                "Generate images from the same facts used in the response text.",
+            ),
+            (
+                "Verification",
+                "Compare image labels and trends with nearby claims before returning.",
+            ),
+        ),
+        "required_data": ["input", "actual_output"],
+    },
+    "deepeval.image_helpfulness": {
+        "meaning": (
+            "Measures whether images in the actual output help answer the user's "
+            "request rather than merely decorating the response."
+        ),
+        "score_direction": "higher_is_better",
+        "calculation_steps": [
+            "Read the user's input and the actual_output content blocks.",
+            "Check what useful information each actual_output image contributes.",
+            "Aggregate the judge's image-helpfulness ratings.",
+        ],
+        "formula": "Image helpfulness = mean judge helpfulness rating across output images",
+        "examples": [
+            _example(
+                "Diagram clarifies the answer",
+                [
+                    ("Input", "Explain the deployment flow"),
+                    ("actual_output", "Steps plus a labeled deployment diagram"),
+                ],
+                [
+                    (
+                        "pass",
+                        "The diagram makes component order and dependencies clear.",
+                    )
+                ],
+                "Useful explanatory image -> high score",
+            ),
+            _example(
+                "Decorative image adds no value",
+                [
+                    ("Input", "List the API error codes"),
+                    ("actual_output", "Error-code list plus an unrelated stock photo"),
+                ],
+                [
+                    (
+                        "fail",
+                        "The image does not help the user understand the error codes.",
+                    )
+                ],
+                "Irrelevant image -> low score",
+            ),
+        ],
+        "improvement_tips": _tips(
+            (
+                "Selection",
+                "Include an image only when it communicates requested information.",
+            ),
+            (
+                "Presentation",
+                "Use labels, captions, and readable details tied to the answer.",
+            ),
+        ),
+        "required_data": ["input", "actual_output"],
+    },
 }

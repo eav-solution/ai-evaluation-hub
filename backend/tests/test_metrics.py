@@ -22,6 +22,8 @@ EXPECTED_DIRECTIONS = {
     "deepeval.role_adherence": "higher_is_better",
     "deepeval.mcp_task_completion": "higher_is_better",
     "deepeval.mcp_use": "higher_is_better",
+    "deepeval.image_coherence": "higher_is_better",
+    "deepeval.image_helpfulness": "higher_is_better",
 }
 
 
@@ -80,6 +82,32 @@ def test_metric_presets_publish_approved_rag_sets(client):
         <= set(preset)
         for preset in presets.values()
     )
+
+
+def test_phase_5_presets_cover_remaining_categories():
+    from app.evals.presets import PRESETS
+
+    assert {preset["id"] for preset in PRESETS.values()} == {
+        "rag_live",
+        "rag_offline_references",
+        "agentic",
+        "conversational",
+        "mcp",
+        "multimodal",
+    }
+    assert PRESETS["multimodal"]["metric_keys"] == [
+        "deepeval.image_coherence",
+        "deepeval.image_helpfulness",
+    ]
+    assert PRESETS["conversational"]["metric_keys"] == [
+        "deepeval.conversation_completeness",
+        "deepeval.turn_relevancy",
+        "deepeval.role_adherence",
+    ]
+    assert PRESETS["mcp"]["metric_keys"] == [
+        "deepeval.mcp_task_completion",
+        "deepeval.mcp_use",
+    ]
 
 
 def test_callable_adapter_accepts_score_boundaries():
