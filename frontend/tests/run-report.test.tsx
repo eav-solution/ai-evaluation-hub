@@ -288,4 +288,29 @@ describe("RunReport metric information", () => {
     await screen.findByText("RAG benchmark");
     expect(screen.queryByText("Result metadata")).not.toBeInTheDocument();
   });
+
+  it("omits empty normalizer boilerplate from agent report details", async () => {
+    const agentResult: RunResult = {
+      ...result(0, "search", 1),
+      details: {
+        sample: {
+          kind: "agent_trace",
+          agent_trace: [{type: "tool", name: "search"}],
+          tools_called: [],
+          expected_tools: [],
+          metadata: {},
+          tags: [],
+          source: {row_index: 0, event_id: null, external_id: null},
+          normalizer_revision: "1",
+        },
+      },
+    };
+    mockReportApi(Promise.resolve([metric]), run, [agentResult]);
+    render(<RunReport workspaceId="workspace-1" runId="run-1" />);
+
+    await screen.findByText("RAG benchmark");
+    fireEvent.click(screen.getByText("Result metadata"));
+    expect(screen.getByText("Agent trace")).toBeInTheDocument();
+    expect(screen.queryByText("Details")).not.toBeInTheDocument();
+  });
 });

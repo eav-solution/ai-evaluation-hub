@@ -47,3 +47,11 @@ def test_curated_upstream_metric_classes_are_importable():
     }
     assert all(getattr(ragas_metrics, name, None) for name in ragas_names)
     assert all(getattr(deepeval_metrics, name, None) for name in deepeval_names)
+
+
+def test_deepeval_agent_trace_private_contract_is_available():
+    from deepeval.test_case import LLMTestCase
+
+    test_case = LLMTestCase(input="task", actual_output="done")
+
+    assert hasattr(test_case, "_trace_dict")

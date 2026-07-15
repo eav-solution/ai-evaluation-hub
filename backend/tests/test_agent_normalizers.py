@@ -54,6 +54,30 @@ def test_normalize_agent_sample_preserves_native_objects_and_source():
     assert sample.tools_called[0].output == "Sunny"
 
 
+def test_normalize_agent_sample_preserves_ingested_metadata_and_tags():
+    from app.evals.normalizers import normalize_sample
+
+    source = {
+        "kind": "agent_trace",
+        "input": "Find weather",
+        "actual_output": "Sunny",
+        "agent_trace": [{"type": "tool", "name": "weather"}],
+        "tools_called": [],
+        "expected_tools": [],
+        "metadata": {"session": "abc-123"},
+        "tags": ["prod", "canary"],
+    }
+
+    sample = normalize_sample(
+        "agent_trace",
+        source,
+        {field: field for field in source},
+    )
+
+    assert sample.metadata == {"session": "abc-123"}
+    assert sample.tags == ["prod", "canary"]
+
+
 def test_normalize_agent_sample_applies_endpoint_overrides_last():
     from app.evals.normalizers import normalize_sample
 

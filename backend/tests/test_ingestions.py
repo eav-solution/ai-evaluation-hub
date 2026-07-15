@@ -121,6 +121,44 @@ def test_ingestion_requires_idempotency_key_and_valid_trace(
     assert object_store == {}
 
 
+def test_ingestion_rejects_oversized_trace_before_upload(
+    client, auth_headers, object_store, monkeypatch
+):
+    monkeypatch.setattr("app.routers.ingestions.MAX_AGENT_TRACE_BYTES", 128)
+    body = _body()
+    body["sample"]["actual_output"] = "x" * 256
+
+    response = client.post(
+        _url(client, auth_headers),
+        json=body,
+        headers={**auth_headers, "Idempotency-Key": "trace-too-large"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Agent trace exceeds the 5 MiB limit"
+    assert object_store == {}
+
+
+def test_ingestion_caps_raw_request_before_json_parsing(
+    client, auth_headers, object_store, monkeypatch
+):
+    monkeypatch.setattr("app.routers.ingestions.MAX_AGENT_TRACE_BYTES", 128)
+
+    response = client.post(
+        _url(client, auth_headers),
+        content=b'{"sample":"' + b"x" * 256,
+        headers={
+            **auth_headers,
+            "Content-Type": "application/json",
+            "Idempotency-Key": "trace-raw-too-large",
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Agent trace exceeds the 5 MiB limit"
+    assert object_store == {}
+
+
 def test_ingestion_artifact_does_not_snapshot_provider_secret(
     client, auth_headers, db, object_store, monkeypatch
 ):

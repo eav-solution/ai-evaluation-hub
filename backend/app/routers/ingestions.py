@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.responses import JSONResponse
 
 from app import storage
 from app.deps import get_db, get_workspace
@@ -32,6 +33,48 @@ router = APIRouter(
     tags=["ingestions"],
 )
 logger = logging.getLogger(__name__)
+MAX_AGENT_TRACE_BYTES = 5 * 1024 * 1024
+_TOO_LARGE_DETAIL = "Agent trace exceeds the 5 MiB limit"
+
+
+class AgentTraceBodyLimitMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or not scope["path"].endswith("/ingestions/agent-traces")
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        received = 0
+        messages = []
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > MAX_AGENT_TRACE_BYTES:
+                    response = JSONResponse(
+                        status_code=413,
+                        content={"detail": _TOO_LARGE_DETAIL},
+                    )
+                    await response(scope, receive, send)
+                    return
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                break
+
+        async def replay_receive():
+            if messages:
+                return messages.pop(0)
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, replay_receive, send)
 
 
 class AgentTraceIngestionIn(BaseModel):
@@ -51,6 +94,21 @@ def _request_hash(body: AgentTraceIngestionIn) -> str:
         sort_keys=True,
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _encode_sample(sample: dict[str, Any]) -> bytes:
+    encoded = json.dumps(
+        sample,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    if len(encoded) > MAX_AGENT_TRACE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=_TOO_LARGE_DETAIL,
+        )
+    return encoded
 
 
 def _out(artifact: EvaluationArtifact, run: Run) -> dict[str, str]:
@@ -116,6 +174,7 @@ def ingest_agent_trace(
     ws: Workspace = Depends(get_workspace),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
+    raw_sample = _encode_sample(body.sample)
     request_hash = _request_hash(body)
     existing = _existing_association(db, ws.id, idempotency_key, request_hash)
     if existing is not None:
@@ -160,12 +219,6 @@ def ingest_agent_trace(
     artifact_id = str(uuid.uuid4())
     run_id = str(uuid.uuid4())
     storage_path = f"evaluation-artifacts/{ws.id}/{artifact_id}.json"
-    raw_sample = json.dumps(
-        body.sample,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
     artifact = EvaluationArtifact(
         id=artifact_id,
         workspace_id=ws.id,

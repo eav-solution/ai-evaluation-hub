@@ -112,6 +112,13 @@ def normalize_sample(
                 continue
             column = schema_map.get(field, field)
             structured[field] = _structured_value(value, field, column)
-        return AgentTraceSample(**common, **structured)
+        metadata = _mapped_value(source, schema_map, "metadata", response_fields)
+        tags = _mapped_value(source, schema_map, "tags", response_fields)
+        return AgentTraceSample(
+            **common,
+            **structured,
+            metadata={} if metadata is _MISSING or metadata is None else metadata,
+            tags=[] if tags is _MISSING or tags is None else tags,
+        )
 
     raise ValueError(f"Sample kind '{sample_kind}' is not supported by this normalizer")

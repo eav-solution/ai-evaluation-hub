@@ -226,6 +226,8 @@ def test_ingestion_worker_loads_artifact_and_recovers_typed_sample(db, monkeypat
         "agent_trace": [{"type": "tool", "name": "book"}],
         "tools_called": [{"name": "book", "arguments": {"flight": "VN1"}}],
         "expected_tools": ["book"],
+        "metadata": {"session": "abc-123"},
+        "tags": ["prod", "canary"],
     }
     artifact = EvaluationArtifact(
         workspace_id=workspace.id,
@@ -273,8 +275,8 @@ def test_ingestion_worker_loads_artifact_and_recovers_typed_sample(db, monkeypat
                     "agent_trace": sample["agent_trace"],
                     "tools_called": sample["tools_called"],
                     "expected_tools": [{"name": "book"}],
-                    "metadata": {},
-                    "tags": [],
+                    "metadata": sample["metadata"],
+                    "tags": sample["tags"],
                 }
             },
         )
@@ -301,6 +303,8 @@ def test_ingestion_worker_loads_artifact_and_recovers_typed_sample(db, monkeypat
     def remaining(sample, judge, config):
         assert isinstance(sample, AgentTraceSample)
         assert sample.expected_tools[0].name == "book"
+        assert sample.metadata == {"session": "abc-123"}
+        assert sample.tags == ["prod", "canary"]
         calls.append("remaining")
         return MetricScore("test.remaining", 0.8, "ok", True)
 
@@ -322,3 +326,5 @@ def test_ingestion_worker_loads_artifact_and_recovers_typed_sample(db, monkeypat
     result = db.query(RunResult).filter_by(run_id=run.id).one()
     assert result.scores["test.done"]["score"] == 1.0
     assert result.scores["test.remaining"]["score"] == 0.8
+    assert result.details["sample"]["metadata"] == {"session": "abc-123"}
+    assert result.details["sample"]["tags"] == ["prod", "canary"]

@@ -16,6 +16,7 @@ from app.routers import (
 )
 
 app = FastAPI(title="AI Evaluation Hub")
+app.add_middleware(ingestions.AgentTraceBodyLimitMiddleware)
 app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(provider_connections.router)

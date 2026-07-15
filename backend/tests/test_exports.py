@@ -153,6 +153,31 @@ def test_html_report_is_self_contained_and_escaped(client, auth_headers, db):
     assert "$0.001200" in html
 
 
+def test_agent_report_details_omit_empty_normalizer_boilerplate():
+    from app.reports import _result_detail_view
+
+    view = _result_detail_view(
+        {
+            "sample": {
+                "kind": "agent_trace",
+                "agent_trace": [{"type": "tool", "name": "search"}],
+                "tools_called": [],
+                "expected_tools": [],
+                "metadata": {},
+                "tags": [],
+                "source": {
+                    "row_index": 0,
+                    "event_id": None,
+                    "external_id": None,
+                },
+                "normalizer_revision": "1",
+            }
+        }
+    )
+
+    assert view["other_details"] is None
+
+
 def test_export_download_routes(client, auth_headers, db):
     workspace, run, _summaries, _results = _completed_run(db)
     base = f"/api/workspaces/{workspace.id}/runs/{run.id}"

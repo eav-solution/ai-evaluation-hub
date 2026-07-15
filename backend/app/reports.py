@@ -49,10 +49,19 @@ def _result_detail_view(details: dict | None) -> dict:
         "agent_trace",
         "tools_called",
         "expected_tools",
+        "normalizer_revision",
     }
     other_sample = {
         key: value for key, value in sample.items() if key not in typed_fields
     }
+    for key in ("metadata", "tags", "source"):
+        if not other_sample.get(key):
+            other_sample.pop(key, None)
+    source = other_sample.get("source")
+    if isinstance(source, dict) and not (
+        source.get("event_id") or source.get("external_id")
+    ):
+        other_sample.pop("source", None)
     if other_sample:
         other_details["sample"] = other_sample
     else:

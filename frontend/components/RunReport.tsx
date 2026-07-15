@@ -56,9 +56,27 @@ function resultDetailView(details: Record<string, unknown> | null) {
     "agent_trace",
     "tools_called",
     "expected_tools",
+    "normalizer_revision",
   ]) {
     delete otherSample[key];
   }
+  for (const key of ["metadata", "tags", "source"]) {
+    if (!otherSample[key]) delete otherSample[key];
+    else if (Array.isArray(otherSample[key]) && !otherSample[key].length) delete otherSample[key];
+    else if (
+      typeof otherSample[key] === "object" &&
+      !Array.isArray(otherSample[key]) &&
+      !Object.keys(otherSample[key] as object).length
+    ) delete otherSample[key];
+  }
+  const source = otherSample.source;
+  if (
+    source &&
+    typeof source === "object" &&
+    !Array.isArray(source) &&
+    !(source as Record<string, unknown>).event_id &&
+    !(source as Record<string, unknown>).external_id
+  ) delete otherSample.source;
   if (Object.keys(otherSample).length) otherDetails.sample = otherSample;
   else delete otherDetails.sample;
 
