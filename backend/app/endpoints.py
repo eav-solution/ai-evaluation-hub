@@ -19,6 +19,15 @@ from app.evals.samples import (
 from app.security import decrypt_secret
 
 
+_STRUCTURED_RESPONSE_FIELDS = {
+    "agent_trace",
+    "tools_called",
+    "expected_tools",
+    "turns",
+    "mcp_events",
+}
+
+
 def render_template(template, row: EvalRow):
     if isinstance(row, ConversationSample):
         values = {
@@ -75,6 +84,13 @@ def extract_response_fields(payload, config: dict) -> dict[str, Any]:
         if field == "actual_output":
             answer = matches[0].value
             values[field] = answer if isinstance(answer, str) else json.dumps(answer)
+            continue
+        if field in _STRUCTURED_RESPONSE_FIELDS:
+            values[field] = (
+                [match.value for match in matches]
+                if len(matches) > 1
+                else matches[0].value
+            )
             continue
         if len(matches) > 1:
             values[field] = [match.value for match in matches]

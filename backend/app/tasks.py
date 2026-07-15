@@ -13,7 +13,14 @@ from app.endpoints import call_endpoint, extract_response_fields
 from app.evals.base import EvalRow, JudgeConfig, SampleKind
 from app.evals.normalizers import normalize_sample
 from app.evals.registry import METRICS
-from app.evals.samples import AgentTraceSample, EvaluationSample, SingleTurnSample
+from app.evals.samples import (
+    AgentTraceSample,
+    ConversationSample,
+    EvaluationSample,
+    SingleTurnSample,
+    conversation_actual_preview,
+    conversation_input_preview,
+)
 from app.models import (
     Dataset,
     Document,
@@ -333,6 +340,27 @@ def _result_complete(result: RunResult, metric_keys: list[str]) -> bool:
 
 
 def _sample_details(sample: EvaluationSample) -> dict | None:
+    if isinstance(sample, ConversationSample):
+        return {
+            "sample": {
+                "kind": "conversation",
+                "turns": [
+                    turn.model_dump(mode="json") for turn in sample.turns
+                ],
+                "chatbot_role": sample.chatbot_role,
+                "conversation_context": sample.conversation_context,
+                "mcp_metadata": sample.mcp_metadata.model_dump(mode="json"),
+                "mcp_events": [
+                    event.model_dump(mode="json") for event in sample.mcp_events
+                ],
+                "metadata": sample.metadata,
+                "tags": sample.tags,
+                "source": (
+                    sample.source.model_dump(mode="json") if sample.source else None
+                ),
+                "normalizer_revision": sample.normalizer_revision,
+            }
+        }
     if isinstance(sample, AgentTraceSample):
         return {
             "sample": {
@@ -360,6 +388,13 @@ def _sample_details(sample: EvaluationSample) -> dict | None:
 
 
 def _write_result_sample(result: RunResult, sample: EvaluationSample) -> None:
+    if isinstance(sample, ConversationSample):
+        result.input = conversation_input_preview(sample)
+        result.actual = conversation_actual_preview(sample)
+        result.expected = None
+        result.contexts = None
+        result.details = _sample_details(sample)
+        return
     result.input = sample.input
     result.actual = sample.actual_output
     if isinstance(sample, SingleTurnSample):
@@ -383,6 +418,21 @@ def _stored_sample(result: RunResult, sample_kind: SampleKind) -> EvaluationSamp
                 "agent_trace": sample.get("agent_trace"),
                 "tools_called": sample.get("tools_called", []),
                 "expected_tools": sample.get("expected_tools", []),
+                "metadata": sample.get("metadata", {}),
+                "tags": sample.get("tags", []),
+                "source": sample.get("source"),
+                "normalizer_revision": sample.get("normalizer_revision", "1"),
+            }
+        )
+    if sample_kind == "conversation":
+        return ConversationSample.model_validate(
+            {
+                "kind": "conversation",
+                "turns": sample.get("turns"),
+                "chatbot_role": sample.get("chatbot_role"),
+                "conversation_context": sample.get("conversation_context", []),
+                "mcp_metadata": sample.get("mcp_metadata", {}),
+                "mcp_events": sample.get("mcp_events", []),
                 "metadata": sample.get("metadata", {}),
                 "tags": sample.get("tags", []),
                 "source": sample.get("source"),
@@ -437,7 +487,15 @@ def evaluate_run(run_id: str) -> None:
                 if result is None:
                     if run.mode == "endpoint":
                         try:
-                            request_row = _eval_row(source, schema_map, "")
+                            if sample_kind == "conversation":
+                                request_row = normalize_sample(
+                                    "conversation",
+                                    source,
+                                    schema_map,
+                                    source_ref={"row_index": index},
+                                )
+                            else:
+                                request_row = _eval_row(source, schema_map, "")
                         except Exception as exc:
                             result = RunResult(
                                 workspace_id=run.workspace_id,
@@ -457,15 +515,14 @@ def evaluate_run(run_id: str) -> None:
                                 workspace_id=run.workspace_id,
                                 run_id=run.id,
                                 row_index=index,
-                                input=request_row.input,
-                                expected=request_row.expected_output,
-                                actual=None,
-                                contexts=request_row.retrieval_contexts,
+                                input="",
                                 scores={},
-                                details=_sample_details(request_row),
                                 error=_INTERRUPTED_ENDPOINT,
                                 latency_ms=None,
                             )
+                            _write_result_sample(result, request_row)
+                            result.actual = None
+                            result.error = _INTERRUPTED_ENDPOINT
                             db.add(result)
                             run.heartbeat_at = datetime.now(timezone.utc)
                             db.commit()
@@ -552,7 +609,7 @@ def evaluate_run(run_id: str) -> None:
                                 workspace_id=run.workspace_id,
                                 run_id=run.id,
                                 row_index=index,
-                                input=row.input,
+                                input="",
                                 scores={},
                                 error=None,
                                 latency_ms=round(
