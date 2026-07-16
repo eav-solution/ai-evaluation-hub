@@ -190,12 +190,23 @@ export function DatasetUpload({
         .text()
         .then((text) => {
           const records = countRecords(text, row.format);
-          patchRow(row.id, {
-            records,
-            error: records > MAX_ROWS ? "Exceeds 5,000 rows" : null,
-          });
+          setRows((current) =>
+            current.map((item) =>
+              item.id === row.id && item.status === "staged"
+                ? {...item, records, error: records > MAX_ROWS ? "Exceeds 5,000 rows" : null}
+                : item,
+            ),
+          );
         })
-        .catch(() => patchRow(row.id, {error: "Could not read this file"}));
+        .catch(() =>
+          setRows((current) =>
+            current.map((item) =>
+              item.id === row.id && item.status === "staged"
+                ? {...item, error: "Could not read this file"}
+                : item,
+            ),
+          ),
+        );
     }
   }, [rows]);
 
@@ -354,7 +365,9 @@ export function DatasetUpload({
             <li className="staged-row" key={row.id}>
               <span className="staged-file">
                 <strong>{row.status === "uploaded" ? row.dataset?.name : row.file.name}</strong>
-                <small>
+                <small
+                  className={row.status !== "uploaded" && row.error ? "staged-error" : undefined}
+                >
                   {row.status === "uploaded"
                     ? `${row.mappedCount} column${row.mappedCount === 1 ? "" : "s"} mapped`
                     : row.error ??

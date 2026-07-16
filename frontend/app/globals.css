@@ -120,6 +120,7 @@ small { font-size: 12px; }
 .staged-file { display: grid; flex: 1; min-width: 0; gap: 2px; }
 .staged-file strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .staged-file small { color: var(--subtle); }
+.staged-file small.staged-error { color: var(--red); }
 .staged-row input { width: 220px; }
 .upload-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .mapper { display: grid; gap: 16px; }

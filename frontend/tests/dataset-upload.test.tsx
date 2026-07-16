@@ -1,6 +1,6 @@
 import {StrictMode} from "react";
 
-import {render, screen, waitFor, within} from "@testing-library/react";
+import {act, render, screen, waitFor, within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {beforeEach, describe, expect, it, vi} from "vitest";
 
@@ -64,7 +64,8 @@ describe("DatasetUpload staging", () => {
     await user.upload(filePicker(), [csvFile("big.csv", 5001), csvFile("ok.csv", 2)]);
 
     const bigRow = (await screen.findByText("big.csv")).closest(".staged-row") as HTMLElement;
-    await within(bigRow).findByText("Exceeds 5,000 rows");
+    const errorText = await within(bigRow).findByText("Exceeds 5,000 rows");
+    expect(errorText).toHaveClass("staged-error");
     await screen.findByRole("button", {name: "Upload 1 file"});
   });
 
@@ -206,6 +207,42 @@ describe("DatasetUpload batch upload", () => {
     expect(
       mockedApi.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(2);
+  });
+
+  it("keeps a failed upload's error after its record count resolves late", async () => {
+    mockedApi.mockRejectedValue(new Error("Server rejected this file"));
+    const user = userEvent.setup();
+    render(<DatasetUpload workspaceId="w1" onComplete={() => {}} />);
+
+    // Give this file a `.text()` we control, so its record count stays
+    // pending until we resolve it ourselves — after the upload has failed.
+    let resolveText!: (value: string) => void;
+    const deferred = {
+      promise: new Promise<string>((resolve) => {
+        resolveText = resolve;
+      }),
+    };
+    const file = csvFile("slow.csv", 1);
+    Object.defineProperty(file, "text", {value: () => deferred.promise});
+
+    await user.upload(filePicker(), file);
+
+    // The count never resolves, but a staged row with records===null and no
+    // error still counts as uploadable, so the button is enabled.
+    const uploadButton = await screen.findByRole("button", {name: "Upload 1 file"});
+    expect(uploadButton).toBeEnabled();
+    await user.click(uploadButton);
+
+    const row = (await screen.findByText("slow.csv")).closest(".staged-row") as HTMLElement;
+    await within(row).findByText("Server rejected this file");
+
+    // NOW let the record count resolve, well after the row has failed.
+    await act(async () => {
+      resolveText("input,actual_output\nq,a\n");
+    });
+
+    expect(within(row).getByText("Server rejected this file")).toBeInTheDocument();
+    expect(within(row).queryByText(/record/)).toBeNull();
   });
 });
 
