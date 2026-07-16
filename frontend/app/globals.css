@@ -106,17 +106,22 @@ small { font-size: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Datasets and common list/table treatments */
-.upload-zone { display: grid; grid-template-columns: minmax(170px, 1fr) auto auto; align-items: end; gap: 10px; }
-.upload-drop { display: grid; grid-column: 1 / -1; place-items: center; gap: 7px; border: 1.5px dashed #d5d5e6; border-radius: 11px; background: #fbfbfe; padding: 26px 20px; text-align: center; }
+.upload-zone { display: grid; gap: 10px; }
+.upload-drop { display: grid; place-items: center; gap: 7px; border: 1.5px dashed #d5d5e6; border-radius: 11px; background: #fbfbfe; padding: 26px 20px; text-align: center; cursor: pointer; }
+.upload-drop:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 3px #deddfd; outline: none; }
+.upload-drop.dragover { border-color: var(--primary); background: var(--soft); }
 .upload-drop strong { font-size: 14px; }
 .upload-drop p { margin: 0; font-size: 12.5px; }
 .upload-icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 999px; background: var(--soft); color: var(--primary-dark); font-size: 16px; font-weight: 800; }
-.upload-name { min-width: 0; }
-.upload-zone > button.primary { grid-column: 3; grid-row: 2; }
-.upload-zone > .notice { grid-column: 1 / -1; grid-row: 3; }
-.file-picker { display: inline-flex; align-items: center; min-height: 38px; border: 1px solid #e2e2ee; border-radius: 9px; background: #fff; box-shadow: 0 1px 2px rgba(25, 25, 60, .05); color: var(--ink); cursor: pointer; font-size: 13px; font-weight: 650; padding: 9px 14px; }
-.file-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.file-picker:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px #deddfd; }
+.skip-note { margin: 0; font-size: 12.5px; }
+.staged-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.staged-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #eef0f6; padding: 10px 2px; }
+.staged-row:last-child { border-bottom: 0; }
+.staged-file { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.staged-file strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staged-file small { color: var(--subtle); }
+.staged-row input { width: 220px; }
+.upload-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .mapper { display: grid; gap: 16px; }
 .mapping-group { margin: 0; }
 .mapping-group legend { margin-bottom: 8px; color: var(--primary); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
@@ -358,7 +363,6 @@ dialog.benchmark-info-modal::backdrop { background: rgba(24, 24, 38, .42); }
   .upload-zone { grid-template-columns: 1fr; }
   .upload-drop { grid-column: auto; }
   .upload-zone > button.primary, .upload-zone > .notice { grid-column: auto; grid-row: auto; }
-  .file-picker { justify-content: center; }
   .dataset-list-header { align-items: stretch; flex-direction: column; }
   .generation-section-header { align-items: stretch; flex-direction: column; }
   .selection-count { align-self: flex-start; }
