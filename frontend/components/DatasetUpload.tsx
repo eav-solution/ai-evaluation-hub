@@ -152,6 +152,7 @@ export function DatasetUpload({
   const [dragover, setDragover] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const countingStarted = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const prevent = (event: DragEvent) => event.preventDefault();
@@ -162,6 +163,29 @@ export function DatasetUpload({
       window.removeEventListener("drop", prevent);
     };
   }, []);
+
+  useEffect(() => {
+    const pending = rows.filter(
+      (row) =>
+        row.records === null &&
+        !row.error &&
+        row.status === "staged" &&
+        !countingStarted.current.has(row.id),
+    );
+    for (const row of pending) {
+      countingStarted.current.add(row.id);
+      row.file
+        .text()
+        .then((text) => {
+          const records = countRecords(text, row.format);
+          patchRow(row.id, {
+            records,
+            error: records > MAX_ROWS ? "Exceeds 5,000 rows" : null,
+          });
+        })
+        .catch(() => patchRow(row.id, {error: "Could not read this file"}));
+    }
+  }, [rows]);
 
   function patchRow(id: string, patch: Partial<StagedRow>) {
     setRows((current) =>
@@ -193,18 +217,6 @@ export function DatasetUpload({
         error: null,
         status: "staged",
       }));
-      for (const row of added) {
-        row.file
-          .text()
-          .then((text) => {
-            const records = countRecords(text, row.format);
-            patchRow(row.id, {
-              records,
-              error: records > MAX_ROWS ? "Exceeds 5,000 rows" : null,
-            });
-          })
-          .catch(() => patchRow(row.id, {error: "Could not read this file"}));
-      }
       return [...current, ...added];
     });
   }

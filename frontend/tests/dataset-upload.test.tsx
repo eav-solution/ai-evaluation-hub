@@ -1,3 +1,5 @@
+import {StrictMode} from "react";
+
 import {render, screen, waitFor, within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {beforeEach, describe, expect, it, vi} from "vitest";
@@ -107,5 +109,19 @@ describe("DatasetUpload staging", () => {
     await user.upload(filePicker(), csvFile("a.csv", 2));
 
     expect(screen.getAllByText("a.csv")).toHaveLength(1);
+  });
+
+  it("counts records exactly once under React StrictMode's double-invoke", async () => {
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <DatasetUpload workspaceId="w1" onComplete={() => {}} />
+      </StrictMode>,
+    );
+
+    await user.upload(filePicker(), csvFile("strict.csv", 3));
+
+    expect(await screen.findByText("3 records")).toBeInTheDocument();
+    expect(screen.getAllByText(/records$/)).toHaveLength(1);
   });
 });
