@@ -208,3 +208,68 @@ describe("DatasetUpload batch upload", () => {
     ).toHaveLength(2);
   });
 });
+
+describe("DatasetUpload results", () => {
+  beforeEach(() => {
+    mockedApi.mockReset();
+  });
+
+  it("badges datasets that still need mapping and opens the mapper inline", async () => {
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return {
+          id: "ds-1",
+          name: "quirky",
+          format: "csv",
+          row_count: 1,
+          storage_path: "",
+          schema_map: {},
+          preview: [{question: "q", answer: "a"}],
+        };
+      }
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as {schema_map: Record<string, string>};
+        return {
+          id: "ds-1",
+          name: "quirky",
+          format: "csv",
+          row_count: 1,
+          storage_path: "",
+          schema_map: body.schema_map,
+          preview: [{question: "q", answer: "a"}],
+        };
+      }
+      throw new Error(`Unexpected call: ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<DatasetUpload workspaceId="w1" onComplete={() => {}} />);
+
+    const quirky = new File(["question,answer\nq,a"], "quirky.csv", {type: "text/csv"});
+    await user.upload(filePicker(), quirky);
+    await user.click(await screen.findByRole("button", {name: "Upload 1 file"}));
+
+    await screen.findByText("Needs mapping");
+    await user.click(screen.getByRole("button", {name: "Map"}));
+    expect(await screen.findByText("Common / RAG")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Input"), "question");
+    await user.click(screen.getByRole("button", {name: "Save mapping"}));
+
+    await waitFor(() => expect(screen.queryByText("Needs mapping")).toBeNull());
+    expect(screen.queryByText("Common / RAG")).toBeNull();
+  });
+
+  it("resets to idle after Done", async () => {
+    mockUploadApi();
+    const user = userEvent.setup();
+    render(<DatasetUpload workspaceId="w1" onComplete={() => {}} />);
+
+    await user.upload(filePicker(), csvFile("one.csv", 1));
+    await user.click(await screen.findByRole("button", {name: "Upload 1 file"}));
+    await user.click(await screen.findByRole("button", {name: "Done"}));
+
+    expect(screen.queryByText("one.csv")).toBeNull();
+    expect(screen.getByText(/drag and drop files or folders/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: "Done"})).toBeNull();
+  });
+});

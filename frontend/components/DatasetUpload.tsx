@@ -152,9 +152,19 @@ export function DatasetUpload({
   const [progress, setProgress] = useState({done: 0, total: 0});
   const [notice, setNotice] = useState("");
   const [dragover, setDragover] = useState(false);
+  const [mapperRowId, setMapperRowId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const countingStarted = useRef<Set<string>>(new Set());
+
+  function reset() {
+    setRows([]);
+    setSkipped(0);
+    setNotice("");
+    setPhase("staging");
+    setProgress({done: 0, total: 0});
+    setMapperRowId(null);
+  }
 
   useEffect(() => {
     const prevent = (event: DragEvent) => event.preventDefault();
@@ -284,29 +294,31 @@ export function DatasetUpload({
 
   return (
     <div className="upload-zone">
-      <div
-        className={`upload-drop${dragover ? " dragover" : ""}`}
-        role="button"
-        tabIndex={0}
-        aria-label="Add dataset files or folders"
-        onClick={openFilePicker}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
+      {phase === "staging" && (
+        <div
+          className={`upload-drop${dragover ? " dragover" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-label="Add dataset files or folders"
+          onClick={openFilePicker}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openFilePicker();
+            }
+          }}
+          onDragOver={(event) => {
             event.preventDefault();
-            openFilePicker();
-          }
-        }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragover(true);
-        }}
-        onDragLeave={() => setDragover(false)}
-        onDrop={onDrop}
-      >
-        <span className="upload-icon" aria-hidden="true">↑</span>
-        <strong>Drag and drop files or folders</strong>
-        <p className="muted">or click to browse · CSV, JSON, JSONL · up to 5,000 rows each</p>
-      </div>
+            setDragover(true);
+          }}
+          onDragLeave={() => setDragover(false)}
+          onDrop={onDrop}
+        >
+          <span className="upload-icon" aria-hidden="true">↑</span>
+          <strong>Drag and drop files or folders</strong>
+          <p className="muted">or click to browse · CSV, JSON, JSONL · up to 5,000 rows each</p>
+        </div>
+      )}
       <input
         ref={fileInputRef}
         className="sr-only"
@@ -341,7 +353,7 @@ export function DatasetUpload({
           {rows.map((row) => (
             <li className="staged-row" key={row.id}>
               <span className="staged-file">
-                <strong>{row.file.name}</strong>
+                <strong>{row.status === "uploaded" ? row.dataset?.name : row.file.name}</strong>
                 <small>
                   {row.status === "uploaded"
                     ? `${row.mappedCount} column${row.mappedCount === 1 ? "" : "s"} mapped`
@@ -351,42 +363,92 @@ export function DatasetUpload({
                         : `${row.records} record${row.records === 1 ? "" : "s"}`)}
                 </small>
               </span>
-              <input
-                aria-label="Dataset name"
-                value={row.name}
-                disabled={phase !== "staging"}
-                onChange={(event) => patchRow(row.id, {name: event.target.value})}
-              />
-              <button
-                type="button"
-                className="ghost"
-                aria-label={`Remove ${row.file.name}`}
-                disabled={phase === "uploading"}
-                onClick={() =>
-                  setRows((current) => current.filter((item) => item.id !== row.id))
-                }
-              >
-                ×
-              </button>
+              {row.status === "uploaded" && row.needsMapping && (
+                <span className="capability-badge">Needs mapping</span>
+              )}
+              {row.status === "uploaded" && row.needsMapping && row.dataset && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMapperRowId((current) => (current === row.id ? null : row.id))
+                  }
+                >
+                  Map
+                </button>
+              )}
+              {phase === "staging" && (
+                <>
+                  <input
+                    aria-label="Dataset name"
+                    value={row.name}
+                    onChange={(event) => patchRow(row.id, {name: event.target.value})}
+                  />
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label={`Remove ${row.file.name}`}
+                    onClick={() =>
+                      setRows((current) => current.filter((item) => item.id !== row.id))
+                    }
+                  >
+                    ×
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>
       )}
+      {mapperRowId &&
+        (() => {
+          const row = rows.find((item) => item.id === mapperRowId);
+          if (!row?.dataset) return null;
+          return (
+            <ColumnMapper
+              dataset={row.dataset}
+              onSave={async (schema_map) => {
+                const saved = await api<Dataset>(
+                  `/api/workspaces/${workspaceId}/datasets/${row.dataset!.id}/schema-map`,
+                  {method: "PATCH", body: JSON.stringify({schema_map})},
+                );
+                patchRow(row.id, {
+                  dataset: saved,
+                  mappedCount: Object.keys(saved.schema_map).length,
+                  needsMapping: !saved.schema_map.input && !saved.schema_map.turns,
+                });
+                setMapperRowId(null);
+                onComplete(saved);
+              }}
+            />
+          );
+        })()}
       <div className="upload-actions">
-        <button type="button" onClick={() => folderInputRef.current?.click()}>
-          Choose folder
-        </button>
-        <button
-          type="button"
-          className="primary"
-          disabled={!canUpload}
-          aria-busy={phase === "uploading"}
-          onClick={uploadAll}
-        >
-          {phase === "uploading"
-            ? `Uploading ${Math.min(progress.done + 1, progress.total)}/${progress.total}…`
-            : `Upload ${uploadable.length} file${uploadable.length === 1 ? "" : "s"}`}
-        </button>
+        {phase === "done" ? (
+          <button type="button" onClick={reset}>
+            Done
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={phase === "uploading"}
+              onClick={() => folderInputRef.current?.click()}
+            >
+              Choose folder
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={!canUpload}
+              aria-busy={phase === "uploading"}
+              onClick={uploadAll}
+            >
+              {phase === "uploading"
+                ? `Uploading ${Math.min(progress.done + 1, progress.total)}/${progress.total}…`
+                : `Upload ${uploadable.length} file${uploadable.length === 1 ? "" : "s"}`}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
