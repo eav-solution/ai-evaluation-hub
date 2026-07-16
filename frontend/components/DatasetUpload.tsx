@@ -4,6 +4,7 @@ import {useEffect, useMemo, useRef, useState} from "react";
 
 import {api} from "@/lib/api";
 import {
+  autoMapColumns,
   collectFilesFromDataTransfer,
   countRecords,
   detectFormat,
@@ -148,6 +149,7 @@ export function DatasetUpload({
   const [rows, setRows] = useState<StagedRow[]>([]);
   const [skipped, setSkipped] = useState(0);
   const [phase, setPhase] = useState<"staging" | "uploading" | "done">("staging");
+  const [progress, setProgress] = useState({done: 0, total: 0});
   const [notice, setNotice] = useState("");
   const [dragover, setDragover] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -237,7 +239,48 @@ export function DatasetUpload({
     uploadable.length > 0 &&
     uploadable.every((row) => row.name.trim() !== "");
 
-  async function uploadAll() {}
+  async function uploadAll() {
+    const queue = uploadable;
+    setPhase("uploading");
+    setProgress({done: 0, total: queue.length});
+    for (const row of queue) {
+      patchRow(row.id, {status: "uploading"});
+      try {
+        const form = new FormData();
+        form.append("name", row.name.trim());
+        form.append("file", row.file);
+        const created = await api<Dataset>(`/api/workspaces/${workspaceId}/datasets`, {
+          method: "POST",
+          body: form,
+        });
+        const columns = Array.from(
+          new Set((created.preview ?? []).flatMap((record) => Object.keys(record))),
+        );
+        const mapping = autoMapColumns(columns);
+        let saved = created;
+        if (Object.keys(mapping).length > 0) {
+          saved = await api<Dataset>(
+            `/api/workspaces/${workspaceId}/datasets/${created.id}/schema-map`,
+            {method: "PATCH", body: JSON.stringify({schema_map: mapping})},
+          );
+        }
+        patchRow(row.id, {
+          status: "uploaded",
+          dataset: saved,
+          mappedCount: Object.keys(saved.schema_map).length,
+          needsMapping: !saved.schema_map.input && !saved.schema_map.turns,
+        });
+        onComplete(saved);
+      } catch (reason) {
+        patchRow(row.id, {
+          status: "failed",
+          error: reason instanceof Error ? reason.message : "Upload failed",
+        });
+      }
+      setProgress((current) => ({...current, done: current.done + 1}));
+    }
+    setPhase("done");
+  }
 
   return (
     <div className="upload-zone">
@@ -300,10 +343,12 @@ export function DatasetUpload({
               <span className="staged-file">
                 <strong>{row.file.name}</strong>
                 <small>
-                  {row.error ??
-                    (row.records === null
-                      ? "Counting records…"
-                      : `${row.records} record${row.records === 1 ? "" : "s"}`)}
+                  {row.status === "uploaded"
+                    ? `${row.mappedCount} column${row.mappedCount === 1 ? "" : "s"} mapped`
+                    : row.error ??
+                      (row.records === null
+                        ? "Counting records…"
+                        : `${row.records} record${row.records === 1 ? "" : "s"}`)}
                 </small>
               </span>
               <input
@@ -335,9 +380,12 @@ export function DatasetUpload({
           type="button"
           className="primary"
           disabled={!canUpload}
+          aria-busy={phase === "uploading"}
           onClick={uploadAll}
         >
-          Upload {uploadable.length} file{uploadable.length === 1 ? "" : "s"}
+          {phase === "uploading"
+            ? `Uploading ${Math.min(progress.done + 1, progress.total)}/${progress.total}…`
+            : `Upload ${uploadable.length} file${uploadable.length === 1 ? "" : "s"}`}
         </button>
       </div>
     </div>

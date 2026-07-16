@@ -125,3 +125,86 @@ describe("DatasetUpload staging", () => {
     expect(screen.getAllByText(/records$/)).toHaveLength(1);
   });
 });
+
+function mockUploadApi() {
+  mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      const form = init.body as FormData;
+      const name = String(form.get("name"));
+      if (name === "fails") throw new Error("Server rejected this file");
+      return {
+        id: `ds-${name}`,
+        name,
+        format: "csv",
+        row_count: 2,
+        storage_path: "",
+        schema_map: {},
+        preview: [{input: "q", actual_output: "a", note: "n"}],
+      };
+    }
+    if (init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as {schema_map: Record<string, string>};
+      const id = path.split("/").slice(-2)[0];
+      return {
+        id,
+        name: id,
+        format: "csv",
+        row_count: 2,
+        storage_path: "",
+        schema_map: body.schema_map,
+        preview: [{input: "q", actual_output: "a", note: "n"}],
+      };
+    }
+    throw new Error(`Unexpected call: ${path}`);
+  });
+}
+
+describe("DatasetUpload batch upload", () => {
+  beforeEach(() => {
+    mockedApi.mockReset();
+  });
+
+  it("uploads sequentially, auto-maps matching columns, and reports per row", async () => {
+    mockUploadApi();
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    render(<DatasetUpload workspaceId="w1" onComplete={onComplete} />);
+
+    await user.upload(filePicker(), [csvFile("one.csv", 2), csvFile("two.csv", 2)]);
+    await screen.findByRole("button", {name: "Upload 2 files"});
+    await user.click(screen.getByRole("button", {name: "Upload 2 files"}));
+
+    await waitFor(() => expect(screen.getAllByText("2 columns mapped")).toHaveLength(2));
+
+    const postCalls = mockedApi.mock.calls.filter(([, init]) => init?.method === "POST");
+    const patchCalls = mockedApi.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(postCalls.map(([path]) => path)).toEqual([
+      "/api/workspaces/w1/datasets",
+      "/api/workspaces/w1/datasets",
+    ]);
+    expect(patchCalls.map(([path]) => path)).toEqual([
+      "/api/workspaces/w1/datasets/ds-one/schema-map",
+      "/api/workspaces/w1/datasets/ds-two/schema-map",
+    ]);
+    expect(JSON.parse(String(patchCalls[0][1]?.body))).toEqual({
+      schema_map: {input: "input", actual_output: "actual_output"},
+    });
+    expect(onComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps uploading after a failed file and shows the error on its row", async () => {
+    mockUploadApi();
+    const user = userEvent.setup();
+    render(<DatasetUpload workspaceId="w1" onComplete={() => {}} />);
+
+    await user.upload(filePicker(), [csvFile("fails.csv", 1), csvFile("ok.csv", 1)]);
+    await screen.findByRole("button", {name: "Upload 2 files"});
+    await user.click(screen.getByRole("button", {name: "Upload 2 files"}));
+
+    await screen.findByText("Server rejected this file");
+    await screen.findByText("2 columns mapped");
+    expect(
+      mockedApi.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(2);
+  });
+});
