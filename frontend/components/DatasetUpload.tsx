@@ -405,6 +405,7 @@ export function DatasetUpload({
           if (!row?.dataset) return null;
           return (
             <ColumnMapper
+              key={row.id}
               dataset={row.dataset}
               onSave={async (schema_map) => {
                 const saved = await api<Dataset>(

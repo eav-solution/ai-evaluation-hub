@@ -259,6 +259,61 @@ describe("DatasetUpload results", () => {
     expect(screen.queryByText("Common / RAG")).toBeNull();
   });
 
+  it("resets the inline mapper's selection when switching to a different row's mapper", async () => {
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        const form = init.body as FormData;
+        const name = String(form.get("name"));
+        if (name === "a") {
+          return {
+            id: "ds-a",
+            name: "a",
+            format: "csv",
+            row_count: 1,
+            storage_path: "",
+            schema_map: {},
+            preview: [{alpha: "x"}],
+          };
+        }
+        return {
+          id: "ds-b",
+          name: "b",
+          format: "csv",
+          row_count: 1,
+          storage_path: "",
+          schema_map: {},
+          preview: [{beta: "y"}],
+        };
+      }
+      throw new Error(`Unexpected call: ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<DatasetUpload workspaceId="w1" onComplete={vi.fn()} />);
+
+    await user.upload(filePicker(), [csvFile("a.csv", 1), csvFile("b.csv", 1)]);
+    await screen.findByRole("button", {name: "Upload 2 files"});
+    await user.click(screen.getByRole("button", {name: "Upload 2 files"}));
+
+    await waitFor(() => expect(screen.getAllByText("Needs mapping")).toHaveLength(2));
+
+    await user.click(screen.getAllByRole("button", {name: "Map"})[0]);
+    await user.selectOptions(screen.getByLabelText("Input"), "alpha");
+    expect(screen.getByLabelText<HTMLSelectElement>("Input").value).toBe("alpha");
+
+    // Switch to the second row's mapper WITHOUT saving row one's selection.
+    await user.click(screen.getAllByRole("button", {name: "Map"})[1]);
+
+    const reopenedInput = screen.getByLabelText<HTMLSelectElement>("Input");
+    expect(reopenedInput.value).toBe("");
+    expect(within(reopenedInput).getByRole("option", {name: "beta"})).toBeInTheDocument();
+    expect(within(reopenedInput).queryByRole("option", {name: "alpha"})).toBeNull();
+    // The real proof: if `mapping` state had leaked over from row one, `mapping.input`
+    // would still be the truthy stale value "alpha" (even though no <option> named
+    // "alpha" exists here to display it), which would leave Save mapping enabled.
+    // A properly reset mapper has a fresh, empty mapping, so Save stays disabled.
+    expect(screen.getByRole("button", {name: "Save mapping"})).toBeDisabled();
+  });
+
   it("resets to idle after Done", async () => {
     mockUploadApi();
     const user = userEvent.setup();
