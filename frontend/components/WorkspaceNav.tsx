@@ -9,6 +9,7 @@ const items = [
   ["Datasets", "datasets"],
   ["Runs", "runs"],
   ["Model Benchmarks", "model-benchmarks"],
+  ["Reasoning Benchmark", "reasoning-benchmarks"],
   ["Settings", "settings"],
 ] as const;
 

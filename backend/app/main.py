@@ -12,6 +12,7 @@ from app.routers import (
     metrics,
     model_benchmarks,
     provider_connections,
+    reasoning_benchmarks,
     runs,
     workspaces,
 )
@@ -29,6 +30,7 @@ app.include_router(ingestions.router)
 app.include_router(endpoint_test.router)
 app.include_router(metrics.router)
 app.include_router(model_benchmarks.router)
+app.include_router(reasoning_benchmarks.router)
 app.include_router(exports.router)
 app.include_router(runs.router)
 
