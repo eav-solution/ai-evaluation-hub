@@ -4,6 +4,23 @@ AI Evaluation Hub helps teams evaluate model answers, RAG pipelines, and live AP
 
 For product workflows—creating a workspace, connecting a provider, uploading a dataset, launching a run, and reading reports—see the [User Guide](docs/user-guide/user-guide.md).
 
+## Demo
+
+<video src="https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo.mp4" poster="https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo-poster.png" controls muted width="100%">
+  <a href="https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo.mp4"><img src="docs/assets/demo-poster.png" alt="AI Evaluation Hub demo — click to play" width="100%"></a>
+</video>
+
+A short walkthrough of the core loop: upload a dataset, map its columns, pick metrics, launch an evaluation run, and read the scored report.
+
+## What is inside
+
+- **25 evaluation metrics** across RAG (8), agentic (5), and general text, conversational, and multimodal quality (12). Two of them—Tool Correctness and Agent Loop Detection—are deterministic and need no judge model.
+- **Datasets** from CSV, JSON, and JSONL, or generated from your own PDF, DOCX, TXT, Markdown, and HTML documents.
+- **Two answer sources**: answers already in the dataset, or a live endpoint the run calls per input.
+- **Reports** with per-metric summaries, score distributions, per-row evidence, and HTML, CSV, and JSON exports.
+- **Model Benchmarks**: a curated catalog of provider-published scores, every entry linked to its first-party source.
+- **Reasoning Benchmarks**: hand-scored comparisons of model reasoning across agent harnesses.
+
 ## Run locally
 
 ### Prerequisites
