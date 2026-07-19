@@ -6,11 +6,9 @@ For product workflows—creating a workspace, connecting a provider, uploading a
 
 ## Demo
 
-<video src="https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo.mp4" poster="https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo-poster.png" controls muted width="100%">
-  <a href="https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo.mp4"><img src="docs/assets/demo-poster.png" alt="AI Evaluation Hub demo — click to play" width="100%"></a>
-</video>
+[![AI Evaluation Hub demo — click to play](docs/assets/demo-poster.png)](https://github.com/eav-solution/ai-evaluation-hub/raw/main/docs/assets/demo.mp4)
 
-A short walkthrough of the core loop: upload a dataset, map its columns, pick metrics, launch an evaluation run, and read the scored report.
+Click the image to play the walkthrough of the core loop: upload a dataset, map its columns, pick metrics, launch an evaluation run, and read the scored report. The file is also in the repository at [`docs/assets/demo.mp4`](docs/assets/demo.mp4).
 
 ## What is inside
 
