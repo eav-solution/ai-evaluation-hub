@@ -1,0 +1,4 @@
+case,input,actual_output,expected_output,retrieval_contexts,note
+case_1_all_correct,What color are bananas and what color are lemons?,Bananas are yellow and lemons are yellow.,Bananas are yellow and lemons are yellow.,"[""Bananas are yellow."", ""Lemons are yellow.""]",Both expected claims covered by contexts -> score ~1.0
+case_2_all_wrong,What color are bananas and what color are lemons?,Bananas are yellow and lemons are yellow.,Bananas are yellow and lemons are yellow.,"[""The sky is blue."", ""Grass is green.""]",No expected claim covered -> score ~0.0
+case_3_half,What color are bananas and what color are lemons?,Bananas are yellow and lemons are yellow.,Bananas are yellow and lemons are yellow.,"[""Bananas are yellow."", ""The sky is blue.""]",1 of 2 expected claims covered -> score ~0.5

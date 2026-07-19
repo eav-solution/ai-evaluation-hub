@@ -1,0 +1,55 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "input": "Show me a photo of a cat.",
+    "actual_output": [
+      {
+        "type": "text",
+        "text": "Here is a photo of a cat:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n02123045_tabby.JPEG"
+      }
+    ],
+    "note": "Text says cat, image IS a cat -> score high"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "input": "Show me a photo of a cat.",
+    "actual_output": [
+      {
+        "type": "text",
+        "text": "Here is a photo of a cat:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n07753592_banana.JPEG"
+      }
+    ],
+    "note": "Text says cat, image is a banana plant -> score low"
+  },
+  {
+    "case": "case_3_half",
+    "input": "Show me a photo of a cat and a photo of a golden dog.",
+    "actual_output": [
+      {
+        "type": "text",
+        "text": "Here is the cat:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n02123045_tabby.JPEG"
+      },
+      {
+        "type": "text",
+        "text": "And here is the golden dog:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n07753592_banana.JPEG"
+      }
+    ],
+    "note": "1st image matches its text, 2nd image (banana) does not -> middle score"
+  }
+]

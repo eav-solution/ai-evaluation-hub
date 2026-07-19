@@ -1,0 +1,4 @@
+case,input,actual_output,note
+case_1_all_correct,What color is milk?,Milk is white. DONE,Config 2 instructions: answer in English + end with DONE. Both followed -> ~1.0
+case_2_all_wrong,What color is milk?,Sữa có màu trắng.,Not English and no DONE -> both instructions violated -> ~0.0
+case_3_half,What color is milk?,Milk is white.,English OK but missing DONE -> 1 of 2 instructions -> ~0.5

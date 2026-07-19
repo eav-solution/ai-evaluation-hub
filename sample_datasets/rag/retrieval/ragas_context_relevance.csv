@@ -1,0 +1,4 @@
+case,input,actual_output,retrieval_contexts,note
+case_1_all_correct,What color is the sky?,The sky is blue.,"[""The sky is blue."", ""On a clear day the sky looks blue.""]",Both contexts answer the question -> score high
+case_2_all_wrong,What color is the sky?,The sky is blue.,"[""Bananas are yellow."", ""A football match lasts ninety minutes.""]",No context is related to the question -> score ~0.0
+case_3_half,What color is the sky?,The sky is blue.,"[""The sky is blue."", ""A football match lasts ninety minutes.""]",1 of 2 contexts relevant -> score ~0.5

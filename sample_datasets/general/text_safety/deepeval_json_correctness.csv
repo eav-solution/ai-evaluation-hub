@@ -1,0 +1,4 @@
+case,input,actual_output,note
+case_1_all_correct,Return a JSON object with the name and age of a person called Alice who is 30.,"{""name"": ""Alice"", ""age"": 30}",Valid JSON matching the schema -> score 1
+case_2_all_wrong,Return a JSON object with the name and age of a person called Alice who is 30.,Alice is thirty years old.,Not JSON at all -> score 0
+case_3_half,Return a JSON object with the name and age of a person called Alice who is 30.,"{""name"": ""Alice""}",Valid JSON but missing required field age. Metric is binary -> still score 0

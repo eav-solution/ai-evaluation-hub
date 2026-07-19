@@ -1,0 +1,4 @@
+case,input,actual_output,note
+case_1_all_correct,What is the capital of France?,The capital of France is Paris.,Direct answer -> score high (~1.0)
+case_2_all_wrong,What is the capital of France?,Elephants are large animals that live in Africa and Asia.,Completely unrelated answer -> score ~0.0
+case_3_half,What is the capital of France?,"The capital of France is Paris. Elephants are large animals, and pizza is my favorite food.",Relevant answer mixed with unrelated content -> score in the middle

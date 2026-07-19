@@ -1,0 +1,68 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "turns": [
+      {
+        "role": "user",
+        "content": "What is the capital of France?"
+      },
+      {
+        "role": "assistant",
+        "content": "The capital of France is Paris."
+      },
+      {
+        "role": "user",
+        "content": "Great, thank you. That is all I needed."
+      },
+      {
+        "role": "assistant",
+        "content": "You're welcome!"
+      }
+    ],
+    "note": "The only user intention is fully satisfied -> score ~1.0"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "turns": [
+      {
+        "role": "user",
+        "content": "What is the capital of France?"
+      },
+      {
+        "role": "assistant",
+        "content": "I'd rather not answer that."
+      },
+      {
+        "role": "user",
+        "content": "Please, I really need the answer."
+      },
+      {
+        "role": "assistant",
+        "content": "Let's talk about something else instead."
+      }
+    ],
+    "note": "The user intention is never satisfied -> score ~0.0"
+  },
+  {
+    "case": "case_3_half",
+    "turns": [
+      {
+        "role": "user",
+        "content": "What is the capital of France, and what is 2 + 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "The capital of France is Paris."
+      },
+      {
+        "role": "user",
+        "content": "And what about 2 + 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "I don't want to do math right now."
+      }
+    ],
+    "note": "1 of 2 user intentions satisfied -> score ~0.5"
+  }
+]

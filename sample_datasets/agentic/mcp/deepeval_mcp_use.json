@@ -1,0 +1,116 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Please add 2 and 3 using the calculator server."
+      },
+      {
+        "role": "assistant",
+        "content": "I called the add tool on the calculator server: 2 + 3 = 5."
+      }
+    ],
+    "mcp_metadata": {
+      "servers": [
+        {
+          "server_name": "calculator-server",
+          "transport": "stdio"
+        }
+      ]
+    },
+    "mcp_events": [
+      {
+        "type": "tool",
+        "name": "add",
+        "payload": {
+          "args": {
+            "a": 2,
+            "b": 3
+          },
+          "result": 5
+        }
+      }
+    ],
+    "note": "Right tool, right arguments, result matches the answer -> score high"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Please add 2 and 3 using the calculator server."
+      },
+      {
+        "role": "assistant",
+        "content": "The weather in Paris is sunny, so the answer is 42."
+      }
+    ],
+    "mcp_metadata": {
+      "servers": [
+        {
+          "server_name": "calculator-server",
+          "transport": "stdio"
+        }
+      ]
+    },
+    "mcp_events": [
+      {
+        "type": "tool",
+        "name": "get_weather",
+        "payload": {
+          "args": {
+            "city": "Paris"
+          },
+          "result": "sunny"
+        }
+      }
+    ],
+    "note": "Wrong tool for the task and a made-up answer -> score low"
+  },
+  {
+    "case": "case_3_half",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Please add 2 and 3, and also subtract 4 from 10, using the calculator server."
+      },
+      {
+        "role": "assistant",
+        "content": "The add tool returned 5 for 2 + 3. For the subtraction I checked the weather instead, so I have no result."
+      }
+    ],
+    "mcp_metadata": {
+      "servers": [
+        {
+          "server_name": "calculator-server",
+          "transport": "stdio"
+        }
+      ]
+    },
+    "mcp_events": [
+      {
+        "type": "tool",
+        "name": "add",
+        "payload": {
+          "args": {
+            "a": 2,
+            "b": 3
+          },
+          "result": 5
+        }
+      },
+      {
+        "type": "tool",
+        "name": "get_weather",
+        "payload": {
+          "args": {
+            "city": "Paris"
+          },
+          "result": "sunny"
+        }
+      }
+    ],
+    "note": "1 correct tool use + 1 wrong tool use -> middle score"
+  }
+]

@@ -1,0 +1,4 @@
+case,input,actual_output,retrieval_contexts,note
+case_1_all_correct,What sound does a dog make?,Dogs bark.,"[""Dogs bark."", ""A dog makes a woof sound.""]",All contexts relevant -> score ~1.0
+case_2_all_wrong,What sound does a dog make?,Dogs bark.,"[""Fish live in water."", ""The moon orbits the Earth.""]",No relevant context -> score ~0.0
+case_3_half,What sound does a dog make?,Dogs bark.,"[""Dogs bark."", ""The moon orbits the Earth.""]",1 of 2 contexts relevant -> score ~0.5

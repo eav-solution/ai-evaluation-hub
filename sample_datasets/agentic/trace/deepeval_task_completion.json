@@ -1,0 +1,56 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "input": "What is 2 + 3? Use the calculator tool.",
+    "actual_output": "I used the calculator tool: 2 + 3 = 5.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "calculator",
+        "input": {
+          "expression": "2 + 3"
+        },
+        "output": {
+          "result": 5
+        }
+      }
+    ],
+    "note": "Task fully completed with the right tool -> score ~1.0"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "input": "What is 2 + 3? Use the calculator tool.",
+    "actual_output": "I checked the weather in Paris instead. It is sunny there.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "weather_lookup",
+        "input": {
+          "city": "Paris"
+        },
+        "output": {
+          "forecast": "sunny"
+        }
+      }
+    ],
+    "note": "Agent did something unrelated and never answered -> score ~0.0"
+  },
+  {
+    "case": "case_3_half",
+    "input": "What is 2 + 3, and what is 10 - 4? Use the calculator tool.",
+    "actual_output": "2 + 3 = 5. I could not compute 10 - 4.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "calculator",
+        "input": {
+          "expression": "2 + 3"
+        },
+        "output": {
+          "result": 5
+        }
+      }
+    ],
+    "note": "Only 1 of 2 requested calculations done -> score around the middle"
+  }
+]

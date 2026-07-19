@@ -1,0 +1,4 @@
+case,input,actual_output,retrieval_contexts,note
+case_1_all_correct,How many days are in a week and how many months are in a year?,A week has seven days and a year has twelve months.,"[""A week has seven days."", ""A year has twelve months.""]",Both claims supported -> score ~1.0
+case_2_all_wrong,How many days are in a week and how many months are in a year?,A week has ten days and a year has twenty months.,"[""A week has seven days."", ""A year has twelve months.""]",Both claims contradict contexts -> score ~0.0
+case_3_half,How many days are in a week and how many months are in a year?,A week has seven days and a year has twenty months.,"[""A week has seven days."", ""A year has twelve months.""]",1 of 2 claims supported -> score ~0.5

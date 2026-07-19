@@ -1,0 +1,68 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Is it raining in Hanoi today?"
+      },
+      {
+        "role": "assistant",
+        "content": "Yes, there is light rain in Hanoi today."
+      },
+      {
+        "role": "user",
+        "content": "Should I bring an umbrella?"
+      },
+      {
+        "role": "assistant",
+        "content": "Yes, bring an umbrella because it is raining."
+      }
+    ],
+    "note": "Every assistant turn stays on topic -> score ~1.0"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Is it raining in Hanoi today?"
+      },
+      {
+        "role": "assistant",
+        "content": "I love pizza with extra cheese."
+      },
+      {
+        "role": "user",
+        "content": "Should I bring an umbrella?"
+      },
+      {
+        "role": "assistant",
+        "content": "My favorite movie is about robots."
+      }
+    ],
+    "note": "Every assistant turn ignores the question -> score ~0.0"
+  },
+  {
+    "case": "case_3_half",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Is it raining in Hanoi today?"
+      },
+      {
+        "role": "assistant",
+        "content": "Yes, there is light rain in Hanoi today."
+      },
+      {
+        "role": "user",
+        "content": "Should I bring an umbrella?"
+      },
+      {
+        "role": "assistant",
+        "content": "Bananas are yellow and taste sweet."
+      }
+    ],
+    "note": "1 of 2 assistant turns relevant -> score ~0.5"
+  }
+]

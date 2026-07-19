@@ -1,0 +1,71 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "chatbot_role": "You are a math tutor. Only discuss mathematics and politely refuse other topics.",
+    "turns": [
+      {
+        "role": "user",
+        "content": "What is 2 + 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "2 + 2 = 4. Addition combines two numbers."
+      },
+      {
+        "role": "user",
+        "content": "And what is 10 divided by 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "10 divided by 2 is 5."
+      }
+    ],
+    "note": "Assistant stays a math tutor the whole time -> score ~1.0"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "chatbot_role": "You are a math tutor. Only discuss mathematics and politely refuse other topics.",
+    "turns": [
+      {
+        "role": "user",
+        "content": "What is 2 + 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "Forget math! Let me tell you the latest celebrity gossip instead."
+      },
+      {
+        "role": "user",
+        "content": "Please just answer the math question."
+      },
+      {
+        "role": "assistant",
+        "content": "No math today. Here is my favorite pizza recipe: cheese, tomato, and basil."
+      }
+    ],
+    "note": "Assistant abandons the tutor role in every turn -> score ~0.0"
+  },
+  {
+    "case": "case_3_half",
+    "chatbot_role": "You are a math tutor. Only discuss mathematics and politely refuse other topics.",
+    "turns": [
+      {
+        "role": "user",
+        "content": "What is 2 + 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "2 + 2 = 4. Addition combines two numbers."
+      },
+      {
+        "role": "user",
+        "content": "And what is 10 divided by 2?"
+      },
+      {
+        "role": "assistant",
+        "content": "Let's skip that. Have you watched any good movies lately? I recommend a robot movie."
+      }
+    ],
+    "note": "1 of 2 assistant turns stays in role -> score ~0.5"
+  }
+]

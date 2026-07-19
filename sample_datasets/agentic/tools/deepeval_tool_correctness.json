@@ -1,0 +1,172 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "input": "Check the weather in Hanoi and email the forecast to Anna.",
+    "actual_output": "I checked the weather and emailed the forecast to Anna.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "get_weather",
+        "input": {
+          "city": "Hanoi"
+        },
+        "output": {
+          "forecast": "sunny"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "send_email",
+        "input": {
+          "to": "anna@example.com",
+          "body": "Sunny in Hanoi"
+        },
+        "output": {
+          "status": "sent"
+        }
+      }
+    ],
+    "tools_called": [
+      {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Hanoi"
+        },
+        "output": {
+          "forecast": "sunny"
+        }
+      },
+      {
+        "name": "send_email",
+        "arguments": {
+          "to": "anna@example.com",
+          "body": "Sunny in Hanoi"
+        },
+        "output": {
+          "status": "sent"
+        }
+      }
+    ],
+    "expected_tools": [
+      {
+        "name": "get_weather"
+      },
+      {
+        "name": "send_email"
+      }
+    ],
+    "note": "Called exactly the 2 expected tools -> score 1.0"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "input": "Check the weather in Hanoi and email the forecast to Anna.",
+    "actual_output": "I played some music and ordered a pizza.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "play_music",
+        "input": {
+          "song": "Jazz"
+        },
+        "output": {
+          "status": "playing"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "order_pizza",
+        "input": {
+          "size": "large"
+        },
+        "output": {
+          "status": "ordered"
+        }
+      }
+    ],
+    "tools_called": [
+      {
+        "name": "play_music",
+        "arguments": {
+          "song": "Jazz"
+        },
+        "output": {
+          "status": "playing"
+        }
+      },
+      {
+        "name": "order_pizza",
+        "arguments": {
+          "size": "large"
+        },
+        "output": {
+          "status": "ordered"
+        }
+      }
+    ],
+    "expected_tools": [
+      {
+        "name": "get_weather"
+      },
+      {
+        "name": "send_email"
+      }
+    ],
+    "note": "Called 0 of 2 expected tools -> score 0.0"
+  },
+  {
+    "case": "case_3_half",
+    "input": "Check the weather in Hanoi and email the forecast to Anna.",
+    "actual_output": "I checked the weather but then just played music.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "get_weather",
+        "input": {
+          "city": "Hanoi"
+        },
+        "output": {
+          "forecast": "sunny"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "play_music",
+        "input": {
+          "song": "Jazz"
+        },
+        "output": {
+          "status": "playing"
+        }
+      }
+    ],
+    "tools_called": [
+      {
+        "name": "get_weather",
+        "arguments": {
+          "city": "Hanoi"
+        },
+        "output": {
+          "forecast": "sunny"
+        }
+      },
+      {
+        "name": "play_music",
+        "arguments": {
+          "song": "Jazz"
+        },
+        "output": {
+          "status": "playing"
+        }
+      }
+    ],
+    "expected_tools": [
+      {
+        "name": "get_weather"
+      },
+      {
+        "name": "send_email"
+      }
+    ],
+    "note": "Called 1 of 2 expected tools -> score 0.5"
+  }
+]

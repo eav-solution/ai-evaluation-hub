@@ -1,0 +1,4 @@
+case,input,actual_output,expected_output,retrieval_contexts,note
+case_1_all_correct,What color is the sky?,The sky is blue.,The sky is blue.,"[""The sky is blue."", ""A clear daytime sky appears blue.""]",All contexts relevant and ranked first -> score ~1.0
+case_2_all_wrong,What color is the sky?,The sky is blue.,The sky is blue.,"[""Bananas are yellow."", ""Cows give milk.""]",No relevant context -> score ~0.0
+case_3_half,What color is the sky?,The sky is blue.,The sky is blue.,"[""Bananas are yellow."", ""The sky is blue.""]",Relevant context ranked BELOW an irrelevant one -> score ~0.5

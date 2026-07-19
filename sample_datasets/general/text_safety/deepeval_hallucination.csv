@@ -1,0 +1,4 @@
+case,input,actual_output,context,note
+case_1_all_correct,What color is the sky and what color is grass?,The sky is blue and grass is green.,"[""The sky is blue."", ""Grass is green.""]",LOWER IS BETTER. Agrees with both contexts -> score ~0.0 (best)
+case_2_all_wrong,What color is the sky and what color is grass?,The sky is green and grass is blue.,"[""The sky is blue."", ""Grass is green.""]",Contradicts both contexts -> score ~1.0 (worst)
+case_3_half,What color is the sky and what color is grass?,The sky is blue and grass is orange.,"[""The sky is blue."", ""Grass is green.""]",Contradicts 1 of 2 contexts -> score ~0.5

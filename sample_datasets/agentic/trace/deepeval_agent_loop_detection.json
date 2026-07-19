@@ -1,0 +1,205 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "input": "Book flight VN310 from Hanoi to Tokyo and email me the confirmation.",
+    "actual_output": "I found flight VN310, booked it, and sent the confirmation email.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "search_flights",
+        "input": {
+          "from": "Hanoi",
+          "to": "Tokyo"
+        },
+        "output": {
+          "flights": [
+            "VN310"
+          ]
+        }
+      },
+      {
+        "type": "tool",
+        "name": "book_flight",
+        "input": {
+          "flight": "VN310"
+        },
+        "output": {
+          "status": "booked"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "send_confirmation",
+        "input": {
+          "email": "user@example.com"
+        },
+        "output": {
+          "status": "sent"
+        }
+      }
+    ],
+    "note": "3 distinct productive steps, no repetition -> score ~1.0 (no loop)"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "input": "Find the printer settings in the app.",
+    "actual_output": "I kept switching between the settings page and the home screen and never found the printer settings.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "open_settings_page",
+        "input": {},
+        "output": "nothing here, going back home",
+        "children": [
+          {
+            "type": "tool",
+            "name": "go_back_home",
+            "input": {},
+            "output": "back at home, opening settings again",
+            "children": [
+              {
+                "type": "tool",
+                "name": "open_settings_page",
+                "input": {},
+                "output": "nothing here, going back home"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "tool",
+        "name": "open_settings_page",
+        "input": {},
+        "output": "nothing here, going back home",
+        "children": [
+          {
+            "type": "tool",
+            "name": "go_back_home",
+            "input": {},
+            "output": "back at home, opening settings again",
+            "children": [
+              {
+                "type": "tool",
+                "name": "open_settings_page",
+                "input": {},
+                "output": "nothing here, going back home"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "tool",
+        "name": "open_settings_page",
+        "input": {},
+        "output": "nothing here, going back home",
+        "children": [
+          {
+            "type": "tool",
+            "name": "go_back_home",
+            "input": {},
+            "output": "back at home, opening settings again",
+            "children": [
+              {
+                "type": "tool",
+                "name": "open_settings_page",
+                "input": {},
+                "output": "nothing here, going back home"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "note": "Agent bounces settings->home->settings in a cycle, no progress -> score ~0.35 (metric floor, deterministic)"
+  },
+  {
+    "case": "case_3_half",
+    "input": "Check the status of order A1 and cancel it if it is still pending.",
+    "actual_output": "After repeatedly checking the status, I cancelled order A1 and notified you.",
+    "agent_trace": [
+      {
+        "type": "tool",
+        "name": "check_order_status",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "pending"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "check_order_status",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "pending"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "check_order_status",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "pending"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "check_order_status",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "pending"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "check_order_status",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "pending"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "check_order_status",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "pending"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "cancel_order",
+        "input": {
+          "order_id": "A1"
+        },
+        "output": {
+          "status": "cancelled"
+        }
+      },
+      {
+        "type": "tool",
+        "name": "notify_user",
+        "input": {
+          "message": "Order A1 cancelled"
+        },
+        "output": {
+          "status": "sent"
+        }
+      }
+    ],
+    "note": "6 identical repeated calls but the task does finish -> score 0.6 (deterministic)"
+  }
+]

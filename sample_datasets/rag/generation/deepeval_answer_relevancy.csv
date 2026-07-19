@@ -1,0 +1,4 @@
+case,input,actual_output,note
+case_1_all_correct,How many legs does a spider have?,A spider has eight legs.,Only relevant statements -> score ~1.0
+case_2_all_wrong,How many legs does a spider have?,I really enjoy watching football on weekends.,No relevant statement -> score ~0.0
+case_3_half,How many legs does a spider have?,A spider has eight legs. Bananas are yellow and taste sweet.,1 of 2 statements relevant -> score ~0.5

@@ -1,0 +1,4 @@
+case,input,actual_output,note
+case_1_all_correct,What is 2 + 2 and what is 5 + 5?,2 + 2 = 4 and 5 + 5 = 10.,Rubric: every arithmetic result must be correct. Both correct -> score high
+case_2_all_wrong,What is 2 + 2 and what is 5 + 5?,2 + 2 = 7 and 5 + 5 = 13.,Both results wrong -> score low
+case_3_half,What is 2 + 2 and what is 5 + 5?,2 + 2 = 4 and 5 + 5 = 13.,1 of 2 results correct -> middle score

@@ -1,0 +1,68 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Please add 2 and 3 using the calculator server."
+      },
+      {
+        "role": "assistant",
+        "content": "I used the calculator server to add the numbers: 2 + 3 = 5."
+      }
+    ],
+    "mcp_metadata": {
+      "servers": [
+        {
+          "server_name": "calculator-server",
+          "transport": "stdio"
+        }
+      ]
+    },
+    "note": "Task fully completed via the MCP server -> score high"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Please add 2 and 3 using the calculator server."
+      },
+      {
+        "role": "assistant",
+        "content": "Sorry, I cannot do math and I did not use any tool."
+      }
+    ],
+    "mcp_metadata": {
+      "servers": [
+        {
+          "server_name": "calculator-server",
+          "transport": "stdio"
+        }
+      ]
+    },
+    "note": "Task not completed at all -> score ~0.0"
+  },
+  {
+    "case": "case_3_half",
+    "turns": [
+      {
+        "role": "user",
+        "content": "Please add 2 and 3, and also subtract 4 from 10, using the calculator server."
+      },
+      {
+        "role": "assistant",
+        "content": "I used the calculator server for the first part: 2 + 3 = 5. I skipped the subtraction."
+      }
+    ],
+    "mcp_metadata": {
+      "servers": [
+        {
+          "server_name": "calculator-server",
+          "transport": "stdio"
+        }
+      ]
+    },
+    "note": "Only 1 of 2 requested calculations done -> middle score"
+  }
+]

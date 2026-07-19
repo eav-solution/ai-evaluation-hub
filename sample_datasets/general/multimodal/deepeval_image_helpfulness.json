@@ -1,0 +1,51 @@
+[
+  {
+    "case": "case_1_all_correct",
+    "input": "What does a golden retriever dog look like? Show me a picture.",
+    "actual_output": [
+      {
+        "type": "text",
+        "text": "A golden retriever is a friendly dog with golden fur. Here is a picture:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n02099601_golden_retriever.JPEG"
+      }
+    ],
+    "note": "Image directly answers the request -> score high"
+  },
+  {
+    "case": "case_2_all_wrong",
+    "input": "What does a golden retriever dog look like? Show me a picture.",
+    "actual_output": [
+      {
+        "type": "text",
+        "text": "Here is what a golden retriever looks like:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n07742313_Granny_Smith.JPEG"
+      }
+    ],
+    "note": "Image is a green apple, useless for the request -> score low"
+  },
+  {
+    "case": "case_3_half",
+    "input": "Show me a picture of a cat and a picture of a banana plant.",
+    "actual_output": [
+      {
+        "type": "text",
+        "text": "Here are the pictures you asked for:"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n02123045_tabby.JPEG"
+      },
+      {
+        "type": "image",
+        "url": "https://raw.githubusercontent.com/EliSchwartz/imagenet-sample-images/master/n07742313_Granny_Smith.JPEG"
+      }
+    ],
+    "note": "Cat image helps, apple image does not (banana was asked) -> middle score"
+  }
+]
